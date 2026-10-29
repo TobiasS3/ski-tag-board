@@ -13,159 +13,126 @@
 <body>
 <div class="wrap" id="wrap">
   <main id="main" hidden>
-    <div class="stats" id="stats"></div>
-
     <section class="panel editor" id="editor" hidden>
       <div class="panel-head"><h2 id="ed-head">Aufgabe</h2><a class="small" id="ed-link" target="_blank" rel="noopener"></a></div>
       <form class="add" id="f-ed">
         <input type="text" id="ed-title" placeholder="Was ist zu tun?" required aria-label="Titel">
         <div class="row">
-          <label class="f">Bereich<select id="ed-area"></select></label>
           <label class="f">Zuständig<select id="ed-who"></select></label>
-          <label class="f">Monat<select id="ed-month"></select></label>
+          <label class="f">Bereich<select id="ed-area"></select></label>
+          <label class="f">Phase<select id="ed-month"></select></label>
         </div>
         <div class="row">
-          <label class="f">Von<input type="date" id="ed-start" min="2026-10-26" max="2027-02-28"></label>
-          <label class="f">Bis<input type="date" id="ed-end" min="2026-10-26" max="2027-02-28"></label>
+          <label class="f">Von<input type="date" id="ed-start" min="2026-10-26" max="2028-02-29"></label>
+          <label class="f">Bis<input type="date" id="ed-end" min="2026-10-26" max="2028-02-29"></label>
           <label class="f" style="flex:0 0 auto">Status<select id="ed-state"><option value="open">offen</option><option value="closed">erledigt</option></select></label>
         </div>
         <textarea id="ed-note" placeholder="Notiz (optional)" aria-label="Notiz"></textarea>
         <div class="row">
-          <button class="btn" type="submit" id="ed-save">Speichern</button>
+          <button class="btn" type="submit">Speichern</button>
           <button class="btn ghost" type="button" id="ed-cancel">Abbrechen</button>
-          <span class="muted small">Ohne Datum gilt der ganze Monat.</span>
+          <span class="muted small">Ohne Datum gilt die ganze Phase.</span>
         </div>
       </form>
     </section>
 
     <section class="panel">
       <div class="panel-head">
-        <h2>Zeitplan bis zum Test</h2>
-        <div class="row">
-          <div class="seg" role="group" aria-label="Gruppieren">
-            <button type="button" data-g="person" aria-pressed="true">nach Person</button>
-            <button type="button" data-g="area" aria-pressed="false">nach Bereich</button>
-            <button type="button" data-g="month" aria-pressed="false">nach Monat</button>
-          </div>
-          <button class="btn" type="button" id="new-task">+ Neue Aufgabe</button>
-        </div>
+        <h2>Zeitplan</h2>
+        <button class="btn" type="button" id="new-task">+ Neue Aufgabe</button>
       </div>
-      <div class="legend" id="legend"></div>
       <div class="gantt-scroll"><div class="gantt" id="gantt"></div></div>
-      <p class="muted small">Auf einen Balken oder Namen klicken, um Zeitraum, Person oder Status zu ändern.</p>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head"><h2>Liste zum Abhaken</h2>
-        <div class="seg" role="group" aria-label="Filter">
-          <button type="button" data-f="open" aria-pressed="true">offen</button>
-          <button type="button" data-f="mine" aria-pressed="false">meine</button>
-          <button type="button" data-f="all" aria-pressed="false">alle</button>
-        </div>
-      </div>
-      <div id="list"></div>
+      <p class="muted small" style="margin:0">Deine eigenen Aufgaben kannst du anklicken und ändern. Abhaken geht auf der Startseite unter „Für dich“.</p>
     </section>
   </main>
 </div>
 <script src="app.js"></script>
 <script>
-let groupBy = "person", filter = "open", editing = null;
+let editing = null;
 const [R0, R1] = CFG.range;
 const pct = (d) => Math.max(0, Math.min(100, (d - R0) / (R1 - R0) * 100));
 const addDay = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-
-function renderStats() {
-  const is = SK.data.issues, done = is.filter(i => i.state === "closed").length;
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const late = is.filter(i => i.state === "open" && taskRange(i) && taskRange(i).end < today).length;
-  const nobody = is.filter(i => i.state === "open" && !(i.assignees || []).length).length;
-  const stat = (n, label) => h("div", { class: "panel stat" }, h("b", {}, n), h("span", { class: "muted small" }, label));
-  $("stats").replaceChildren(stat(done + "/" + is.length, "Aufgaben erledigt"), stat(is.length - done, "noch offen"), stat(late, "überfällig"), stat(nobody, "ohne Zuständigen"));
-}
-
-function groups() {
-  const is = SK.data.issues;
-  if (groupBy === "area") return Object.keys(AREAS).map(k => [AREAS[k], is.filter(i => areaOfIssue(i) === k)]);
-  if (groupBy === "month") return [...SK.data.milestones.map(m => [m.title, is.filter(i => i.milestone && i.milestone.number === m.number)]), ["Ohne Monat", is.filter(i => !i.milestone)]];
-  return [...SK.data.people.map(p => [nameOf(p.login), is.filter(i => (i.assignees || []).some(a => a.login === p.login))]), ["Niemand zuständig", is.filter(i => !(i.assignees || []).length)]];
-}
+const PHASE_COLORS = ["--p-blau", "--p-rot", "--sos", "--p-gelb", "--done"];
 
 function renderGantt() {
-  const g = $("gantt"), parts = [];
-  // Kopf: Monate und Wochen
-  const head = h("div", { class: "g-head" });
-  for (let d = new Date(R0); d < R1; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) {
-    const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-    head.append(h("div", { class: "g-month", style: `left:${pct(d)}%;width:${pct(next) - pct(d)}%` }, d.toLocaleDateString("de-AT", { month: "long", year: "numeric" })));
-  }
-  const mondays = [];
-  for (let d = new Date(R0); d < R1; d = addDay(d, 1)) if (d.getDay() === 1) mondays.push(new Date(d));
-  for (const d of mondays) head.append(h("div", { class: "g-week", style: `left:${pct(d)}%` }, d.getDate() + "." + (d.getMonth() + 1) + "."));
+  const parts = [];
+  const months = [];
+  for (let d = new Date(R0.getFullYear(), R0.getMonth(), 1); d < R1; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) months.push(d);
+  // Kopf: Monate
+  const head = h("div", { class: "g-head", style: "height:26px" });
+  months.forEach((d, idx) => {
+    const next = new Date(d.getFullYear(), d.getMonth() + 1, 1), l = pct(d < R0 ? R0 : d);
+    head.append(h("div", { class: "g-month", style: `left:${l}%;width:${pct(next) - l}%;font-size:13px` },
+      d.toLocaleDateString("de-AT", { month: "short" }).replace(".", "") + (d.getMonth() === 0 || idx === 0 ? " " + String(d.getFullYear()).slice(2) : "")));
+  });
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const todayIn = today >= R0 && today < R1;
-  if (todayIn) head.append(h("div", { class: "g-today-label", style: `left:${pct(today)}%` }, "heute"));
   parts.push(h("div", {}), head);
-
   const decorate = (track) => {
-    for (const d of mondays) track.append(h("div", { class: "g-grid", style: `left:${pct(d)}%` }));
-    if (todayIn) track.append(h("div", { class: "g-today", style: `left:${pct(today)}%` }));
+    for (const d of months) track.append(h("div", { class: "g-grid", style: `left:${pct(d)}%` }));
+    track.append(h("div", { class: "g-today", style: `left:${pct(today)}%`, title: "heute" }));
   };
-  // Ziel-Zeile
-  const goalTrack = h("div", { class: "g-track" }); decorate(goalTrack);
-  goalTrack.append(h("div", { class: "g-goal", style: `left:${pct(CFG.testDay)}%;width:${100 - pct(CFG.testDay)}%` }));
-  parts.push(h("div", { class: "g-label" }, h("span", { class: "t", style: "color:var(--sos)" }, "Test im Schnee"), h("span", { class: "muted small" }, "Februar 2027")), goalTrack);
 
-  for (const [title, list] of groups()) {
+  // Phasen
+  parts.push(h("div", { class: "g-group" }, "Phasen"));
+  SK.data.milestones.forEach((m, idx) => {
+    const [s, e] = msBounds(m), title = m.title.replace(/^Phase \d+:\s*/, "");
+    const list = SK.data.issues.filter(i => i.milestone && i.milestone.number === m.number), done = list.filter(i => i.state === "closed").length;
+    parts.push(h("div", { class: "g-label" }, h("span", { class: "t", title: m.title }, (idx + 1) + ". " + title), h("span", { class: "muted small" }, done + " von " + list.length + " erledigt")));
+    const track = h("div", { class: "g-track" }); decorate(track);
+    const l = pct(s), w = Math.max(1, pct(addDay(e, 1)) - l);
+    track.append(h("div", { class: "g-bar", style: `left:${l}%;width:${w}%;--c:var(${PHASE_COLORS[idx % PHASE_COLORS.length]});cursor:default`,
+      title: m.title + "\n" + s.toLocaleDateString("de-AT") + " – " + e.toLocaleDateString("de-AT") }, title));
+    parts.push(track);
+  });
+
+  // pro Person
+  const groups = [...SK.data.people.map(p => [nameOf(p.login), SK.data.issues.filter(i => (i.assignees || []).some(a => a.login === p.login))]),
+    ["Noch niemand zuständig", SK.data.issues.filter(isFree)]];
+  for (const [title, list] of groups) {
     if (!list.length) continue;
     const done = list.filter(i => i.state === "closed").length;
     parts.push(h("div", { class: "g-group" }, title, h("span", { class: "muted small", style: "font-family:var(--font-body);font-weight:500;margin-left:8px" }, done + " von " + list.length + " erledigt")));
-    const sorted = [...list].sort((a, b) => ((taskRange(a) || {}).start || 9e15) - ((taskRange(b) || {}).start || 9e15));
-    for (const i of sorted) {
-      const r = taskRange(i), area = areaOfIssue(i), isDone = i.state === "closed";
-      const who = (i.assignees || []).map(a => firstName(a.login)).join(", ") || "niemand";
-      parts.push(h("div", { class: "g-label" + (isDone ? " done" : ""), onclick: () => openEditor(i), title: i.title },
-        h("span", { class: "t" }, (isDone ? "✓ " : "") + i.title), h("span", { class: "muted small" }, groupBy === "person" ? AREAS[area] : who)));
+    for (const i of [...list].sort((a, b) => ((taskRange(a) || {}).start || 9e15) - ((taskRange(b) || {}).start || 9e15))) {
+      const r = taskRange(i), area = areaOfIssue(i), isDone = i.state === "closed", canEdit = isMine(i) || isFree(i);
+      const open = () => canEdit ? openEditor(i) : status("Das ist die Aufgabe von " + ownerName(i) + ". Nur " + ownerName(i) + " kann sie ändern.");
+      parts.push(h("div", { class: "g-label" + (isDone ? " done" : ""), onclick: open, title: i.title },
+        h("span", { class: "t" }, (isDone ? "✓ " : "") + i.title),
+        h("span", { class: "muted small" }, isFree(i) && !isDone
+          ? h("button", { class: "link", type: "button", onclick: (e) => { e.stopPropagation(); act(async () => { await takeOver(i); await SK.refresh(); }, "Übernommen."); } }, "Übernehmen")
+          : chip(area))));
       const track = h("div", { class: "g-track" }); decorate(track);
       if (r) {
-        const l = pct(r.start), w = Math.max(1.2, pct(addDay(r.end, 1)) - l);
-        track.append(h("button", { type: "button", class: `g-bar a-${area}` + (isDone ? " done" : ""), style: `left:${l}%;width:${w}%`,
-          title: `${i.title}\n${r.start.toLocaleDateString("de-AT")} – ${r.end.toLocaleDateString("de-AT")} · ${who}`, onclick: () => openEditor(i) }, who));
-      } else track.append(h("span", { class: "muted small", style: "position:absolute;left:8px;top:10px" }, "kein Zeitraum"));
+        const l = pct(r.start), w = Math.max(1, pct(addDay(r.end, 1)) - l);
+        track.append(h("button", { type: "button", class: `g-bar a-${area}` + (isDone ? " done" : ""), style: `left:${l}%;width:${w}%;${canEdit ? "" : "cursor:default"}`,
+          title: `${i.title}\n${r.start.toLocaleDateString("de-AT")} – ${r.end.toLocaleDateString("de-AT")}`, onclick: open }, i.title));
+      }
       parts.push(track);
     }
   }
-  g.replaceChildren(...parts);
-  $("legend").replaceChildren(...Object.keys(AREAS).map(chip));
+  $("gantt").replaceChildren(...parts);
 }
 
-function renderList() {
-  let is = SK.data.issues;
-  if (filter === "open") is = is.filter(i => i.state === "open");
-  if (filter === "mine") is = is.filter(i => (i.assignees || []).some(a => a.login === SK.me.login));
-  is = [...is].sort((a, b) => (a.state === "closed") - (b.state === "closed") || ((taskRange(a) || {}).end || 9e15) - ((taskRange(b) || {}).end || 9e15));
-  $("list").replaceChildren(...(is.length ? is.map(i => taskRow(i, openEditor)) : [h("p", { class: "empty" }, filter === "mine" ? "Dir ist gerade nichts zugewiesen." : "Alles erledigt.")]));
-}
-
-// ---------- Bearbeiten ----------
+// ---------- Bearbeiten (nur eigene oder freie Aufgaben) ----------
 function fillEditorSelects() {
   areaOptions($("ed-area"));
   peopleOptions($("ed-who"), "Niemand");
   const ms = $("ed-month"), keep = ms.value;
-  ms.replaceChildren(h("option", { value: "auto" }, "Automatisch (nach „Bis“-Datum)"), h("option", { value: "" }, "Kein Monat"),
+  ms.replaceChildren(h("option", { value: "auto" }, "Automatisch (nach „Bis“-Datum)"),
     ...SK.data.milestones.map(m => h("option", { value: m.number }, m.title)));
   ms.value = keep || "auto";
 }
 function openEditor(i) {
   editing = i || null;
+  status("");
   fillEditorSelects();
   const r = i ? RANGE_RE.exec(i.body || "") : null;
-  $("ed-head").textContent = i ? "Aufgabe bearbeiten" : "Neue Aufgabe";
+  $("ed-head").textContent = i ? "Aufgabe ändern" : "Neue Aufgabe";
   $("ed-link").textContent = i ? "#" + i.number + " auf GitHub" : "";
   if (i) $("ed-link").href = i.html_url; else $("ed-link").removeAttribute("href");
   $("ed-title").value = i ? i.title : "";
   $("ed-area").value = i ? areaOfIssue(i) : "plan";
   $("ed-who").value = i && i.assignees && i.assignees[0] ? i.assignees[0].login : (i ? "" : SK.me.login);
-  $("ed-month").value = i ? (i.milestone ? String(i.milestone.number) : "") : "auto";
+  $("ed-month").value = i && i.milestone ? String(i.milestone.number) : "auto";
   $("ed-start").value = r ? r[1] : "";
   $("ed-end").value = r ? r[2] : "";
   $("ed-state").value = i ? i.state : "open";
@@ -191,7 +158,7 @@ $("f-ed").addEventListener("submit", (ev) => {
   const area = $("ed-area").value;
   const otherLabels = editing ? (editing.labels || []).map(l => l.name).filter(n => !AREAS[n]) : [];
   let ms = $("ed-month").value;
-  ms = ms === "auto" ? (end ? milestoneFor(end) : (editing && editing.milestone ? editing.milestone.number : null)) : (ms ? Number(ms) : null);
+  ms = ms === "auto" ? (end ? milestoneFor(end) : (editing && editing.milestone ? editing.milestone.number : null)) : Number(ms);
   const payload = { title, body, labels: [...otherLabels, area], assignees: $("ed-who").value ? [$("ed-who").value] : [], milestone: ms };
   const wasNew = !editing;
   act(async () => {
@@ -209,15 +176,9 @@ $("f-ed").addEventListener("submit", (ev) => {
 });
 $("ed-cancel").addEventListener("click", () => { $("editor").hidden = true; editing = null; });
 $("new-task").addEventListener("click", () => openEditor(null));
-document.querySelectorAll("[data-g]").forEach(b => b.addEventListener("click", () => {
-  groupBy = b.dataset.g; document.querySelectorAll("[data-g]").forEach(x => x.setAttribute("aria-pressed", x === b)); renderGantt();
-}));
-document.querySelectorAll("[data-f]").forEach(b => b.addEventListener("click", () => {
-  filter = b.dataset.f; document.querySelectorAll("[data-f]").forEach(x => x.setAttribute("aria-pressed", x === b)); renderList();
-}));
 
-startPage("zeitplan", ["tasks", "diary"], async () => {
-  renderStats(); renderGantt(); renderList();
+startPage("zeitplan", ["tasks"], async () => {
+  renderGantt();
   if (!$("editor").hidden) { const keep = { area: $("ed-area").value, who: $("ed-who").value, month: $("ed-month").value }; fillEditorSelects(); $("ed-area").value = keep.area; $("ed-who").value = keep.who; $("ed-month").value = keep.month; }
 });
 </script>

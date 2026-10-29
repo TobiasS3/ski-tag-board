@@ -85,7 +85,7 @@ textarea { resize: vertical; min-height: 64px; }
 .a-netzwerk { --c: var(--p-blau); }
 .a-hardware { --c: var(--p-rot); }
 .a-app { --c: var(--p-schwarz); }
-.a-kosten { --c: var(--p-gelb); }
+.a-wirtschaft { --c: var(--p-gelb); }
 .a-plan { --c: var(--p-grau); }
 .pill { font-size: 12px; font-weight: 700; border-radius: 6px; padding: 1px 8px; white-space: nowrap; }
 .pill.open { background: var(--sos); color: #fff; }

@@ -13,13 +13,11 @@
 <body>
 <div class="wrap" id="wrap">
   <main id="main" hidden>
-    <div class="team" id="team"></div>
-
     <div class="grid2">
       <section class="panel">
         <h2>Was hast du heute gemacht?</h2>
         <form class="add" id="f-log">
-          <textarea id="log-text" placeholder="z. B. LoRa-Reichweite getestet, 1,2 km bis zur Bergstation" required aria-label="Was hast du heute gemacht"></textarea>
+          <textarea id="log-text" placeholder="z. B. Kapitel Akku im Hardware-Buch geschrieben" required aria-label="Was hast du heute gemacht"></textarea>
           <div class="row">
             <select id="log-area" class="grow" aria-label="Bereich"></select>
             <button class="btn" type="submit">Eintragen</button>
@@ -35,28 +33,15 @@
 
     <div class="grid2">
       <section class="panel">
-        <div class="panel-head"><h2>Was ist neu?</h2><span class="muted small">seit deinem letzten Besuch gelb</span></div>
-        <div class="list" id="activity"></div>
+        <div class="panel-head"><h2>Tagebuch</h2><span class="muted small">letzte 14 Tage</span></div>
+        <div class="list" id="diary"></div>
       </section>
 
       <section class="panel">
-        <div class="panel-head"><h2>Offene Fragen</h2><a class="small" href="fragen.html">alle Fragen</a></div>
-        <form class="add" id="f-q">
-          <input type="text" id="q-title" placeholder="Frage stellen, z. B. „Geht das in der App?“" required aria-label="Frage">
-          <div class="row">
-            <select id="q-to" class="grow" aria-label="An wen"></select>
-            <select id="q-area" class="grow" aria-label="Bereich"></select>
-            <button class="btn" type="submit">Fragen</button>
-          </div>
-        </form>
-        <div class="list" id="questions"></div>
+        <div class="panel-head"><h2>Was ist neu?</h2><span class="muted small">neu seit deinem letzten Besuch ist gelb</span></div>
+        <div class="list" id="activity"></div>
       </section>
     </div>
-
-    <section class="panel">
-      <div class="panel-head"><h2>Tagebuch</h2><span class="muted small">letzte 14 Tage</span></div>
-      <div class="list" id="diary"></div>
-    </section>
   </main>
 </div>
 <script src="app.js"></script>
@@ -64,36 +49,26 @@
 function renderMine() {
   const me = SK.me.login;
   const qs = openQuestionsFor(me), ts = openTasksOf(me);
-  $("mine-count").textContent = (qs.length + ts.length) ? `${qs.length} Fragen · ${ts.length} Aufgaben` : "";
+  $("mine-count").textContent = (qs.length + ts.length) ? `${ts.length} Aufgaben · ${qs.length} Fragen` : "";
   const parts = [];
+  if (ts.length) parts.push(h("h3", {}, "Deine Aufgaben"), h("div", {}, ...ts
+    .sort((a, b) => ((taskRange(a) || {}).end || 9e15) - ((taskRange(b) || {}).end || 9e15)).map(i => taskRow(i))));
   if (qs.length) parts.push(h("h3", {}, "Fragen an dich"), ...qs.map(q => h("div", { class: "item" + (isNew(q.createdAt) ? " is-new" : "") }, av(q.author),
     h("div", {}, h("div", { class: "top" }, h("b", {}, firstName(q.author && q.author.login)), h("span", {}, ago(q.createdAt))),
       h("p", {}, h("a", { href: "fragen.html#q" + q.number }, cleanTitle(q.title)))))));
-  if (ts.length) parts.push(h("h3", {}, "Deine Aufgaben"), h("div", {}, ...ts
-    .sort((a, b) => ((taskRange(a) || {}).end || 9e15) - ((taskRange(b) || {}).end || 9e15)).map(i => taskRow(i))));
-  if (!parts.length) parts.push(h("p", { class: "empty" }, "Gerade ist nichts für dich offen. Neue Aufgaben legst du im Zeitplan an."));
+  if (!parts.length) parts.push(h("p", { class: "empty" }, "Gerade ist nichts für dich offen."));
   $("mine").replaceChildren(...parts);
 }
 function renderActivity() {
-  const list = SK.data.activity.slice(0, 12);
+  const list = SK.data.activity;
   $("activity").replaceChildren(...(list.length ? list.map(a => h("div", { class: "item" + (isNew(a.at) ? " is-new" : "") }, av(a.who),
     h("div", {}, h("div", { class: "top" }, h("b", {}, firstName(a.who && a.who.login)), h("span", {}, ago(a.at))),
       h("p", {}, h("a", { href: a.href }, a.text))))) : [h("p", { class: "empty" }, "Noch nichts passiert.")]));
 }
-function renderQuestions() {
-  const open = SK.data.questions.filter(q => !q.isAnswered).slice(0, 6);
-  $("questions").replaceChildren(...(open.length ? open.map(q => {
-    const to = recipientOf(q);
-    return h("div", { class: "item" + (isNew(q.createdAt) ? " is-new" : "") }, av(q.author),
-      h("div", {}, h("div", { class: "top" }, h("b", {}, firstName(q.author && q.author.login)), h("span", {}, "an " + (to ? firstName(to) : "alle")),
-        areaOfQuestion(q) ? chip(areaOfQuestion(q)) : null),
-        h("p", {}, h("a", { href: "fragen.html#q" + q.number }, cleanTitle(q.title)))));
-  }) : [h("p", { class: "empty" }, "Keine offenen Fragen.")]));
-}
 function renderDiary() {
   const since = Date.now() - 14 * 86400000;
   const list = SK.data.diary.filter(c => Date.parse(c.created_at) >= since);
-  if (!list.length) return $("diary").replaceChildren(h("p", { class: "empty" }, "Noch keine Einträge. Schreib oben rein, woran du heute gearbeitet hast."));
+  if (!list.length) return $("diary").replaceChildren(h("p", { class: "empty" }, "Noch keine Einträge. Schreib links rein, woran du heute gearbeitet hast."));
   const byDay = new Map();
   for (const c of list) { const k = dayKey(c.created_at); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(c); }
   $("diary").replaceChildren(...[...byDay].flatMap(([k, cs]) => [h("div", { class: "day-h" }, dayLabel(k)), ...cs.map(c => {
@@ -104,20 +79,14 @@ function renderDiary() {
   })]));
 }
 
-areaOptions($("log-area")); areaOptions($("q-area")); $("q-area").value = "app";
+areaOptions($("log-area"));
 $("f-log").addEventListener("submit", (ev) => {
   ev.preventDefault(); const text = $("log-text").value.trim(); if (!text) return;
   act(async () => { await postDiary($("log-area").value, text); $("log-text").value = ""; await SK.refresh(); }, "Eingetragen.");
 });
-$("f-q").addEventListener("submit", (ev) => {
-  ev.preventDefault(); const t = $("q-title").value.trim(); if (!t) return;
-  act(async () => { await askQuestion($("q-area").value, $("q-to").value, t, ""); $("q-title").value = ""; await SK.refresh(); }, "Frage gestellt.");
-});
 
 startPage("start", ["tasks", "diary", "activity"], async () => {
-  renderTeam($("team"));
-  peopleOptions($("q-to"), "An alle");
-  renderMine(); renderActivity(); renderQuestions(); renderDiary();
+  renderMine(); renderDiary(); renderActivity();
 });
 </script>
 </body>

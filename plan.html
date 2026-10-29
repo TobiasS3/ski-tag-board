@@ -76,7 +76,7 @@ const DEFAULT_COSTS = {
 let costs = null, costSha = null, dirty = false, charts = {};
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const euro = (n) => n.toLocaleString("de-AT", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
-const AREA_COLORS = { netzwerk: "--p-blau", hardware: "--p-rot", app: "--p-schwarz", kosten: "--p-gelb", plan: "--p-grau" };
+const AREA_COLORS = { netzwerk: "--p-blau", hardware: "--p-rot", app: "--p-schwarz", wirtschaft: "--p-gelb", plan: "--p-grau" };
 
 function chart(id, config) {
   if (!window.Chart) return;

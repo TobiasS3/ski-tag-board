@@ -7,9 +7,9 @@ const CFG = {
   planFile: "Ski Tag Plan.html",
   costFile: "daten/kosten.json",
   testDay: new Date(2027, 1, 1),
-  range: [new Date(2026, 9, 26), new Date(2027, 2, 1)],
+  range: [new Date(2026, 9, 26), new Date(2028, 2, 1)],
 };
-const AREAS = { netzwerk: "Netzwerk", hardware: "Hardware", app: "App", kosten: "Kosten", plan: "Plan" };
+const AREAS = { hardware: "Hardware", netzwerk: "Netzwerk", wirtschaft: "Wirtschaft & Verkauf", app: "App", plan: "Plan" };
 const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen";
 const R = "/repos/" + CFG.owner + "/" + CFG.repo;
 
@@ -156,7 +156,7 @@ async function loadActivity() {
     if (e.event === "milestoned" && e.milestone) text = "hat „" + e.issue.title + "“ in " + e.milestone.title + " gelegt";
     out.push({ at: e.created_at, who: e.actor, text, href: "zeitplan.html" });
   }
-  for (const i of d.issues) out.push({ at: i.created_at, who: i.user, text: "hat eine Aufgabe angelegt: " + i.title, href: "zeitplan.html" });
+  for (const i of d.issues) if (isNew(i.created_at)) out.push({ at: i.created_at, who: i.user, text: "hat eine Aufgabe angelegt: " + i.title, href: "zeitplan.html" });
   for (const c of comments) {
     const num = Number((c.issue_url || "").split("/").pop());
     if (num === CFG.diary) out.push({ at: c.created_at, who: c.user, text: "hat ins Tagebuch geschrieben: " + parseEntry(c.body).text.slice(0, 90), href: "./" });
@@ -170,7 +170,7 @@ async function loadActivity() {
     const msg = (c.commit.message || "").split("\n")[0];
     out.push({ at: c.commit.author.date, who: c.author, text: "hat den Plan geändert: " + msg, href: "plan.html" });
   }
-  d.activity = out.filter(x => x.at).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 40);
+  d.activity = out.filter(x => x.at).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 10);
 }
 
 // ---------- Inhalte deuten ----------
@@ -198,6 +198,8 @@ const openQuestionsFor = (login) => SK.data.questions.filter(q => !q.isAnswered 
 // Zeitraum einer Aufgabe: „Zeitraum: 2026-11-03 – 2026-11-20“ im Text, sonst der Monat des Milestones
 const RANGE_RE = /^Zeitraum:\s*(\d{4}-\d{2}-\d{2})\s*[–-]+\s*(\d{4}-\d{2}-\d{2})\s*$/m;
 function msBounds(m) {
+  const r = RANGE_RE.exec(m.description || "");
+  if (r) return [r[1], r[2]].map(s => { const [Y, M, D] = s.split("-").map(Number); return new Date(Y, M - 1, D); });
   const due = new Date(Date.parse(m.due_on) - 12 * 3600e3);
   const end = new Date(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
   return [new Date(end.getFullYear(), end.getMonth(), 1), end];
@@ -266,18 +268,30 @@ function renderTeam(box) {
       h("span", { class: "meta" }, `Woche: ${entries} Einträge · ${done} erledigt · ${openTasksOf(p.login).length} offen`));
   }));
 }
+// Abhaken und Ändern darf nur, wer zuständig ist. Aufgaben ohne Zuständigen kann man übernehmen.
+const isMine = (i) => (i.assignees || []).some(a => a.login === SK.me.login);
+const isFree = (i) => !(i.assignees || []).length;
+const ownerName = (i) => (i.assignees || []).map(a => firstName(a.login)).join(", ");
+async function takeOver(i) {
+  await api(R + "/issues/" + i.number, { method: "PATCH", body: { assignees: [SK.me.login] } });
+}
+function tickBox(i) {
+  if (isMine(i)) return h("input", { type: "checkbox", id: "t-" + i.number, checked: i.state === "closed", "aria-label": "Erledigt: " + i.title,
+    onchange: (ev) => act(async () => { await setTaskState(i, ev.target.checked); await SK.refresh(); }, ev.target.checked ? "Abgehakt." : "Wieder offen.") });
+  return h("input", { type: "checkbox", checked: i.state === "closed", disabled: true, "aria-label": "Erledigt: " + i.title, title: isFree(i) ? "Erst übernehmen" : "Nur " + ownerName(i) + " kann das abhaken" });
+}
 function taskRow(i, onOpen) {
   const closer = SK.data.closers[i.number], r = taskRange(i);
   return h("div", { class: "task" + (i.state === "closed" ? " done" : "") },
-    h("input", { type: "checkbox", id: "t-" + i.number, checked: i.state === "closed", "aria-label": "Erledigt: " + i.title,
-      onchange: (ev) => act(async () => { await setTaskState(i, ev.target.checked); await SK.refresh(); }, ev.target.checked ? "Abgehakt." : "Wieder offen.") }),
+    tickBox(i),
     h("div", {},
       h("span", { class: "t", role: onOpen ? "button" : null, tabindex: onOpen ? "0" : null, onclick: onOpen ? () => onOpen(i) : null,
         onkeydown: onOpen ? (e) => { if (e.key === "Enter") onOpen(i); } : null }, i.title),
       h("div", { class: "sub" }, chip(areaOfIssue(i)),
         (i.assignees || []).length ? h("span", { class: "who" }, ...i.assignees.map(a => h("img", { src: a.avatar_url, alt: nameOf(a.login), title: nameOf(a.login) }))) : h("span", {}, "niemand zuständig"),
         r ? h("span", {}, r.start.toLocaleDateString("de-AT", { day: "numeric", month: "short" }) + " – " + r.end.toLocaleDateString("de-AT", { day: "numeric", month: "short" })) : null,
-        i.state === "closed" ? h("span", {}, "erledigt" + (closer ? " von " + firstName(closer.login) : "") + " am " + dateOf(i.closed_at)) : null)),
+        i.state === "closed" ? h("span", {}, "erledigt" + (closer ? " von " + firstName(closer.login) : "") + " am " + dateOf(i.closed_at)) : null,
+        isFree(i) && i.state === "open" ? h("button", { class: "link", type: "button", onclick: () => act(async () => { await takeOver(i); await SK.refresh(); }, "Übernommen.") }, "Übernehmen") : null)),
     h("a", { class: "small", href: i.html_url, target: "_blank", rel: "noopener", title: "Auf GitHub öffnen" }, "#" + i.number));
 }
 
@@ -289,8 +303,8 @@ function shell(page) {
   const days = Math.max(0, Math.round((CFG.testDay - now) / 86400000));
   const head = h("header", { class: "head" },
     h("div", {}, h("div", { class: "eyebrow" }, "Ski Tag · Team"), h("h1", {}, "Ski Tag Board"),
-      h("p", {}, "Zeitplan, Aufgaben, Fragen und Businessplan an einem Ort.")),
-    h("div", { class: "count" }, h("b", {}, days), h("span", {}, "Tage bis zum Test im Schnee (Feb 2027)")));
+      h("p", {}, "Wer macht was bis wann.")),
+    h("div", { class: "count" }, h("b", {}, days), h("span", {}, "Tage bis zur Präsentation bei KitzSki (Feb 2027)")));
   const nav = h("div", { class: "navbar" },
     h("nav", { class: "tabs" }, ...PAGES.map(([href, key, label]) =>
       h("a", { href, "aria-current": key === page ? "page" : null }, label, key === "fragen" ? h("span", { class: "n", id: "nav-q", hidden: true }) : null))),
