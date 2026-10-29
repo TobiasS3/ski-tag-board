@@ -31,49 +31,57 @@
       </section>
     </div>
 
-    <div class="grid2">
-      <section class="panel">
-        <div class="panel-head"><h2>Tagebuch</h2><span class="muted small">letzte 14 Tage</span></div>
-        <div class="list" id="diary"></div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-head"><h2>Was ist neu?</h2><span class="muted small">neu seit deinem letzten Besuch ist gelb</span></div>
-        <div class="list" id="activity"></div>
-      </section>
-    </div>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Tagebuch</h2>
+        <div class="seg" role="group" aria-label="Filter">
+          <button type="button" data-f="new" aria-pressed="true">nur neue</button>
+          <button type="button" data-f="14" aria-pressed="false">letzte 14 Tage</button>
+        </div>
+      </div>
+      <div class="list" id="diary"></div>
+    </section>
   </main>
 </div>
 <script src="app.js"></script>
 <script>
+let diaryFilter = "new";
+
 function renderMine() {
   const me = SK.me.login;
-  const qs = openQuestionsFor(me), ts = openTasksOf(me);
-  $("mine-count").textContent = (qs.length + ts.length) ? `${ts.length} Aufgaben · ${qs.length} Fragen` : "";
+  const qs = openQuestionsFor(me), ts = openTasksOf(me), answers = newAnswersFor(me);
+  const n = [ts.length && ts.length + " Aufgaben", qs.length && qs.length + " Fragen", answers.length && answers.length + " Antworten"].filter(Boolean);
+  $("mine-count").textContent = n.join(" · ");
   const parts = [];
-  if (ts.length) parts.push(h("h3", {}, "Deine Aufgaben"), h("div", {}, ...ts
-    .sort((a, b) => ((taskRange(a) || {}).end || 9e15) - ((taskRange(b) || {}).end || 9e15)).map(i => taskRow(i))));
+  if (answers.length) parts.push(h("h3", {}, "Neue Antworten auf deine Fragen"), ...answers.map(q => {
+    const c = [...q.comments.nodes].reverse().find(c => c.author && c.author.login !== me && isNew(c.createdAt));
+    return h("div", { class: "item is-new" }, av(c.author),
+      h("div", {}, h("div", { class: "top" }, h("b", {}, firstName(c.author.login)), h("span", {}, ago(c.createdAt))),
+        h("p", {}, h("a", { href: "fragen.html#q" + q.number }, cleanTitle(q.title)))));
+  }));
   if (qs.length) parts.push(h("h3", {}, "Fragen an dich"), ...qs.map(q => h("div", { class: "item" + (isNew(q.createdAt) ? " is-new" : "") }, av(q.author),
     h("div", {}, h("div", { class: "top" }, h("b", {}, firstName(q.author && q.author.login)), h("span", {}, ago(q.createdAt))),
       h("p", {}, h("a", { href: "fragen.html#q" + q.number }, cleanTitle(q.title)))))));
+  if (ts.length) parts.push(h("h3", {}, "Deine Aufgaben"), h("div", {}, ...ts
+    .sort((a, b) => ((taskRange(a) || {}).end || 9e15) - ((taskRange(b) || {}).end || 9e15)).map(i => taskRow(i))));
   if (!parts.length) parts.push(h("p", { class: "empty" }, "Gerade ist nichts für dich offen."));
   $("mine").replaceChildren(...parts);
 }
-function renderActivity() {
-  const list = SK.data.activity;
-  $("activity").replaceChildren(...(list.length ? list.map(a => h("div", { class: "item" + (isNew(a.at) ? " is-new" : "") }, av(a.who),
-    h("div", {}, h("div", { class: "top" }, h("b", {}, firstName(a.who && a.who.login)), h("span", {}, ago(a.at))),
-      h("p", {}, h("a", { href: a.href }, a.text))))) : [h("p", { class: "empty" }, "Noch nichts passiert.")]));
-}
+
 function renderDiary() {
   const since = Date.now() - 14 * 86400000;
-  const list = SK.data.diary.filter(c => Date.parse(c.created_at) >= since);
-  if (!list.length) return $("diary").replaceChildren(h("p", { class: "empty" }, "Noch keine Einträge. Schreib links rein, woran du heute gearbeitet hast."));
+  const list = SK.data.diary.filter(c => diaryFilter === "new" ? isNew(c.created_at) : Date.parse(c.created_at) >= since);
+  if (!list.length) {
+    const msg = diaryFilter === "new"
+      ? (SK.prevSeen ? "Nichts Neues seit deinem letzten Besuch." : "Das ist dein erster Besuch. Unter „letzte 14 Tage“ siehst du, was bisher geschrieben wurde.")
+      : "Noch keine Einträge. Schreib oben rein, woran du heute gearbeitet hast.";
+    return $("diary").replaceChildren(h("p", { class: "empty" }, msg));
+  }
   const byDay = new Map();
   for (const c of list) { const k = dayKey(c.created_at); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(c); }
   $("diary").replaceChildren(...[...byDay].flatMap(([k, cs]) => [h("div", { class: "day-h" }, dayLabel(k)), ...cs.map(c => {
     const e = parseEntry(c.body);
-    return h("div", { class: "item" + (isNew(c.created_at) ? " is-new" : "") }, av(c.user), h("div", {},
+    return h("div", { class: "item" }, av(c.user), h("div", {},
       h("div", { class: "top" }, h("b", {}, nameOf(c.user && c.user.login)), e.area ? chip(e.area) : null, h("span", {}, timeOf(c.created_at))),
       h("p", {}, e.text)));
   })]));
@@ -84,9 +92,12 @@ $("f-log").addEventListener("submit", (ev) => {
   ev.preventDefault(); const text = $("log-text").value.trim(); if (!text) return;
   act(async () => { await postDiary($("log-area").value, text); $("log-text").value = ""; await SK.refresh(); }, "Eingetragen.");
 });
+document.querySelectorAll("[data-f]").forEach(b => b.addEventListener("click", () => {
+  diaryFilter = b.dataset.f; document.querySelectorAll("[data-f]").forEach(x => x.setAttribute("aria-pressed", x === b)); renderDiary();
+}));
 
-startPage("start", ["tasks", "diary", "activity"], async () => {
-  renderMine(); renderDiary(); renderActivity();
+startPage("start", ["tasks", "diary"], async () => {
+  renderMine(); renderDiary();
 });
 </script>
 </body>

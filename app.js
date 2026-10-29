@@ -15,7 +15,7 @@ const R = "/repos/" + CFG.owner + "/" + CFG.repo;
 
 const SK = {
   token: null, me: null,
-  data: { people: [], names: {}, milestones: [], issues: [], closers: {}, diary: [], questions: [], qa: null, repoId: null, activity: [] },
+  data: { people: [], names: {}, milestones: [], issues: [], closers: {}, diary: [], questions: [], qa: null, repoId: null },
   prevSeen: 0,
 };
 
@@ -140,39 +140,6 @@ async function loadQuestions() {
   d.qa = repo.discussionCategories.nodes.find(c => c.slug === "q-a") || null;
   d.questions = repo.discussions.nodes.filter(x => x.category && x.category.slug === "q-a");
 }
-async function loadActivity() {
-  const d = SK.data;
-  const [events, comments, commits] = await Promise.all([
-    api(R + "/issues/events?per_page=60"),
-    api(R + "/issues/comments?sort=created&direction=desc&per_page=40"),
-    api(R + "/commits?per_page=15"),
-  ]);
-  const out = [];
-  const words = { closed: "hat abgehakt", reopened: "hat wieder geöffnet", assigned: "hat zugewiesen", milestoned: "hat einem Monat zugeordnet", renamed: "hat umbenannt" };
-  for (const e of events) {
-    if (!words[e.event] || !e.issue || e.issue.number === CFG.diary) continue;
-    let text = words[e.event] + ": " + e.issue.title;
-    if (e.event === "assigned" && e.assignee) text = "hat " + nameOf(e.assignee.login) + " zugewiesen: " + e.issue.title;
-    if (e.event === "milestoned" && e.milestone) text = "hat „" + e.issue.title + "“ in " + e.milestone.title + " gelegt";
-    out.push({ at: e.created_at, who: e.actor, text, href: "zeitplan.html" });
-  }
-  for (const i of d.issues) if (isNew(i.created_at)) out.push({ at: i.created_at, who: i.user, text: "hat eine Aufgabe angelegt: " + i.title, href: "zeitplan.html" });
-  for (const c of comments) {
-    const num = Number((c.issue_url || "").split("/").pop());
-    if (num === CFG.diary) out.push({ at: c.created_at, who: c.user, text: "hat ins Tagebuch geschrieben: " + parseEntry(c.body).text.slice(0, 90), href: "./" });
-    else out.push({ at: c.created_at, who: c.user, text: "hat eine Aufgabe kommentiert", href: c.html_url });
-  }
-  for (const q of d.questions) {
-    out.push({ at: q.createdAt, who: q.author, text: "hat gefragt: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
-    for (const c of q.comments.nodes) out.push({ at: c.createdAt, who: c.author, text: "hat geantwortet auf: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
-  }
-  for (const c of commits) {
-    const msg = (c.commit.message || "").split("\n")[0];
-    out.push({ at: c.commit.author.date, who: c.author, text: "hat den Plan geändert: " + msg, href: "plan.html" });
-  }
-  d.activity = out.filter(x => x.at).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 10);
-}
-
 // ---------- Inhalte deuten ----------
 function areaOfIssue(i) { return (i.labels || []).map(x => x.name).find(n => AREAS[n]) || "plan"; }
 function parseEntry(body) {
@@ -193,6 +160,8 @@ function recipientOf(q) {
 }
 const bodyWithoutRecipient = (b) => (b || "").replace(/^An:\s*(@[A-Za-z0-9-]+|alle)\s*\n?/m, "").trim();
 const openTasksOf = (login) => SK.data.issues.filter(i => i.state === "open" && (i.assignees || []).some(a => a.login === login));
+const newAnswersFor = (login) => SK.data.questions.filter(q => q.author && q.author.login === login &&
+  q.comments.nodes.some(c => c.author && c.author.login !== login && isNew(c.createdAt)));
 const openQuestionsFor = (login) => SK.data.questions.filter(q => !q.isAnswered && recipientOf(q) === login);
 
 // Zeitraum einer Aufgabe: „Zeitraum: 2026-11-03 – 2026-11-20“ im Text, sonst der Monat des Milestones
@@ -346,7 +315,6 @@ let pageRender = null, pageNeeds = [];
 async function refresh() {
   const jobs = { people: loadPeople, tasks: loadTasks, diary: loadDiary, questions: loadQuestions };
   await Promise.all(pageNeeds.filter(k => jobs[k]).map(k => jobs[k]()));
-  if (pageNeeds.includes("activity")) await loadActivity();
   renderUserbox();
   if (pageRender) await pageRender();
 }
