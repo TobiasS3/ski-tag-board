@@ -12,7 +12,7 @@ const CFG = {
   areaOf: { "Ma-xi": "hardware", Lukcoderc: "netzwerk", TobiasS3: "wirtschaft" },
 };
 const AREAS = { hardware: "Hardware", netzwerk: "Netzwerk", wirtschaft: "Wirtschaft & Verkauf", app: "App", plan: "Plan" };
-const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen";
+const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen2"; // „2“: Stand einmal zurückgesetzt, damit die letzten 7 Tage als neu erscheinen
 const R = "/repos/" + CFG.owner + "/" + CFG.repo;
 
 const SK = {
@@ -64,7 +64,9 @@ function store(k, v) { try { v == null ? localStorage.removeItem(k) : localStora
 function load(k) { try { return localStorage.getItem(k); } catch { return null; } }
 const isNew = (iso) => !!SK.prevSeen && Date.parse(iso) > SK.prevSeen;
 // Wann hat man eine Seite zuletzt angeschaut? Für die aktuelle Seite der Stand vom Sitzungsbeginn.
-const seenOf = (page) => page === SK.page ? SK.prevSeen : Number(load(SEEN_KEY + "-" + page) || 0);
+// Wer eine Seite noch nie besucht hat, bekommt die letzten 7 Tage als „neu“ angezeigt
+const FIRST_VISIT = () => Date.now() - 7 * 86400000;
+const seenOf = (page) => page === SK.page ? SK.prevSeen : (Number(load(SEEN_KEY + "-" + page) || 0) || FIRST_VISIT());
 const newerThan = (iso, base) => !!base && Date.parse(iso) > base;
 
 function status(text, isErr) {
@@ -403,7 +405,7 @@ async function boot() {
     const key = SEEN_KEY + "-" + SK.page;
     let seen = 0;
     try { seen = Number(sessionStorage.getItem(key) || 0); } catch {}
-    if (!seen) seen = Number(load(key) || 0);
+    if (!seen) seen = Number(load(key) || 0) || FIRST_VISIT();
     SK.prevSeen = seen;
     try { sessionStorage.setItem(key, String(seen)); } catch {}
     await refresh();
