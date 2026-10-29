@@ -64,13 +64,13 @@ function filtered() {
 function deleteButton(c) {
   const box = h("span", { class: "del" });
   const normal = () => box.replaceChildren(h("button", { class: "x", type: "button", title: "Eintrag löschen", "aria-label": "Eintrag löschen", onclick: ask }, "×"));
-  const ask = () => box.replaceChildren(h("span", { class: "small" }, "Löschen?"),
-    h("button", { class: "link danger", type: "button", onclick: () => act(async () => {
+  const ask = () => box.replaceChildren(h("span", { class: "confirm-q" }, "Wirklich löschen?"),
+    h("button", { class: "btn danger small", type: "button", onclick: () => act(async () => {
       const body = c.body;
       await api(R + "/issues/comments/" + c.id, { method: "DELETE" }); await SK.refresh();
       return () => api(R + "/issues/" + CFG.diary + "/comments", { method: "POST", body: { body } });
-    }, "Eintrag gelöscht.") }, "Ja"),
-    h("button", { class: "link", type: "button", onclick: normal }, "Nein"));
+    }, "Eintrag gelöscht.") }, "Ja, löschen"),
+    h("button", { class: "btn ghost small", type: "button", onclick: normal }, "Nein"));
   normal();
   return box;
 }

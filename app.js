@@ -289,13 +289,13 @@ function taskActions(i) {
     i.state === "open" ? h("button", { class: "link", type: "button", onclick: () => act(async () => {
       await giveBack(i); await SK.refresh(); return () => takeOver(i);
     }, "Abgegeben. Jetzt kann sie jemand anders übernehmen.") }, "Abgeben") : "",
-    h("button", { class: "link", type: "button", onclick: ask }, "Löschen"));
-  const ask = () => box.replaceChildren(h("span", { class: "small" }, "Wirklich löschen?"),
-    h("button", { class: "link danger", type: "button", onclick: () => act(async () => {
+    h("button", { class: "link danger", type: "button", onclick: ask }, "Löschen"));
+  const ask = () => box.replaceChildren(h("span", { class: "confirm-q" }, "Wirklich löschen?"),
+    h("button", { class: "btn danger small", type: "button", onclick: () => act(async () => {
       await dropTask(i.number); await SK.refresh();
       return () => api(R + "/issues/" + i.number, { method: "PATCH", body: was === "open" ? { state: "open" } : { state: "closed", state_reason: "completed" } });
-    }, "Gelöscht.") }, "Ja"),
-    h("button", { class: "link", type: "button", onclick: normal }, "Nein"));
+    }, "Gelöscht.") }, "Ja, löschen"),
+    h("button", { class: "btn ghost small", type: "button", onclick: normal }, "Nein"));
   normal();
   return box;
 }
