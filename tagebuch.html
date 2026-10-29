@@ -76,10 +76,12 @@ function deleteButton(c) {
 }
 function entry(c) {
   const e = parseEntry(c.body), me = SK.me.login;
-  // eigene Einträge von heute darf man noch ändern
-  const editable = c.user && c.user.login === me && dayKey(c.created_at) === ymd(new Date());
+  // eigene Einträge darf man jederzeit ändern, falls man etwas vergessen hat
+  const editable = c.user && c.user.login === me;
+  const edited = c.updated_at && Date.parse(c.updated_at) - Date.parse(c.created_at) > 60000;
   const fresh = isNew(c.created_at) && c.user && c.user.login !== me;
   const top = h("div", { class: "top" }, h("b", {}, nameOf(c.user && c.user.login)), e.area ? chip(e.area) : null, h("span", {}, timeOf(c.created_at)),
+    edited ? h("span", { class: "small", title: "zuletzt geändert am " + dateOf(c.updated_at) + " um " + timeOf(c.updated_at) }, "(geändert)") : null,
     fresh ? h("span", { class: "pill new" }, "neu") : null,
     editable && editId !== c.id ? h("button", { class: "link", type: "button", onclick: () => { editId = c.id; editDraft = null; renderDiary(); } }, "bearbeiten") : null,
     c.user && c.user.login === me && editId !== c.id ? deleteButton(c) : null);
