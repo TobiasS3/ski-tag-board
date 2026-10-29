@@ -195,3 +195,9 @@ details.more > summary { cursor: pointer; color: var(--muted); font-size: 15px; 
 .navbar > * { min-width: 0; }
 .is-new .pill.new { background: var(--sos); color: #fff; }
 .wrap > *, .head > * { min-width: 0; }
+
+/* Meldung unten mit „Rückgängig“ */
+#status { position: fixed; z-index: 20; left: 50%; transform: translateX(-50%); bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  width: max-content; max-width: calc(100% - 32px); display: flex; align-items: center; gap: 12px;
+  background: var(--surface); color: var(--ink); border-style: solid; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+#status .undo { padding: 4px 12px; }

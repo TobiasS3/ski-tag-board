@@ -14,7 +14,7 @@
 <div class="wrap" id="wrap">
   <main id="main" hidden>
     <section class="panel editor" id="editor" hidden>
-      <div class="panel-head"><h2 id="ed-head">Aufgabe</h2><a class="small" id="ed-link" target="_blank" rel="noopener"></a></div>
+      <h2 id="ed-head">Aufgabe</h2>
       <form class="add" id="f-ed">
         <input type="text" id="ed-title" placeholder="Was ist zu tun?" required aria-label="Titel">
         <div class="row">
@@ -42,7 +42,7 @@
         <button class="btn" type="button" id="new-task">+ Neue Aufgabe</button>
       </div>
       <div class="gantt-scroll"><div class="gantt" id="gantt"></div></div>
-      <p class="muted small" style="margin:0">Deine eigenen Aufgaben kannst du anklicken und ändern. Abhaken geht auf der Seite „Aufgaben“.</p>
+      <p class="muted small" style="margin:0">Deine eigenen Aufgaben kannst du anklicken und ändern. Abhaken geht unter „Meine Aufgaben“.</p>
     </section>
   </main>
 </div>
@@ -98,7 +98,7 @@ function renderGantt() {
       parts.push(h("div", { class: "g-label" + (isDone ? " done" : ""), onclick: open, title: i.title },
         h("span", { class: "t" }, (isDone ? "✓ " : "") + i.title),
         h("span", { class: "muted small" }, isFree(i) && !isDone
-          ? h("button", { class: "link", type: "button", onclick: (e) => { e.stopPropagation(); act(async () => { await takeOver(i); await SK.refresh(); }, "Übernommen."); } }, "Übernehmen")
+          ? h("button", { class: "link", type: "button", onclick: (e) => { e.stopPropagation(); act(async () => { await takeOver(i); await SK.refresh(); return () => giveBack(i); }, "Übernommen."); } }, "Übernehmen")
           : chip(area))));
       const track = h("div", { class: "g-track" }); decorate(track);
       if (r) {
@@ -127,8 +127,6 @@ function openEditor(i) {
   fillEditorSelects();
   const r = i ? RANGE_RE.exec(i.body || "") : null;
   $("ed-head").textContent = i ? "Aufgabe ändern" : "Neue Aufgabe";
-  $("ed-link").textContent = i ? "#" + i.number + " auf GitHub" : "";
-  if (i) $("ed-link").href = i.html_url; else $("ed-link").removeAttribute("href");
   $("ed-title").value = i ? i.title : "";
   $("ed-area").value = i ? areaOfIssue(i) : "plan";
   $("ed-who").value = i && i.assignees && i.assignees[0] ? i.assignees[0].login : (i ? "" : SK.me.login);
@@ -161,17 +159,24 @@ $("f-ed").addEventListener("submit", (ev) => {
   ms = ms === "auto" ? (end ? milestoneFor(end) : (editing && editing.milestone ? editing.milestone.number : null)) : Number(ms);
   const payload = { title, body, labels: [...otherLabels, area], assignees: $("ed-who").value ? [$("ed-who").value] : [], milestone: ms };
   const wasNew = !editing;
+  const old = editing;
   act(async () => {
-    if (editing) {
-      if ($("ed-state").value !== editing.state) payload.state = $("ed-state").value;
-      await api(R + "/issues/" + editing.number, { method: "PATCH", body: payload });
-      delete SK.data.closers[editing.number];
+    let undo;
+    if (old) {
+      if ($("ed-state").value !== old.state) payload.state = $("ed-state").value;
+      await api(R + "/issues/" + old.number, { method: "PATCH", body: payload });
+      delete SK.data.closers[old.number];
+      const before = { title: old.title, body: old.body || "", labels: (old.labels || []).map(l => l.name), assignees: (old.assignees || []).map(a => a.login),
+        milestone: old.milestone ? old.milestone.number : null, state: old.state };
+      undo = () => api(R + "/issues/" + old.number, { method: "PATCH", body: before });
     } else {
       const created = await api(R + "/issues", { method: "POST", body: payload });
       if ($("ed-state").value === "closed") await api(R + "/issues/" + created.number, { method: "PATCH", body: { state: "closed" } });
+      undo = () => dropTask(created.number);
     }
     $("editor").hidden = true; editing = null;
     await SK.refresh();
+    return undo;
   }, wasNew ? "Aufgabe angelegt." : "Gespeichert.");
 });
 $("ed-cancel").addEventListener("click", () => { $("editor").hidden = true; editing = null; });

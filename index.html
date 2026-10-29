@@ -24,17 +24,17 @@
     </section>
 
     <section class="panel">
-      <div class="panel-head"><h2>Deine Aufgaben</h2><span class="muted small" id="mine-count"></span></div>
+      <div class="panel-head"><h2>Meine Aufgaben</h2><span class="muted small" id="mine-count"></span></div>
       <div id="mine"></div>
-    </section>
-
-    <section class="panel">
-      <h2>Aufgaben der anderen</h2>
-      <div id="others"></div>
       <details class="more" id="done-box" hidden>
         <summary id="done-sum">Erledigt</summary>
         <div id="done"></div>
       </details>
+    </section>
+
+    <section class="panel" id="free-box" hidden>
+      <h2>Noch niemand zuständig</h2>
+      <div id="free"></div>
     </section>
   </main>
 </div>
@@ -44,19 +44,14 @@ const byEnd = (a, b) => ((taskRange(a) || {}).end || 9e15) - ((taskRange(b) || {
 
 function render() {
   const me = SK.me.login, is = SK.data.issues;
-  const open = is.filter(i => i.state === "open"), done = is.filter(i => i.state === "closed");
+  const open = is.filter(i => i.state === "open"), done = is.filter(i => i.state === "closed" && isMine(i));
   const mine = open.filter(isMine).sort(byEnd);
   $("mine-count").textContent = mine.length ? mine.length + " offen" : "";
   $("mine").replaceChildren(...(mine.length ? mine.map(i => taskRow(i)) : [h("p", { class: "empty" }, "Du hast gerade keine offenen Aufgaben.")]));
 
-  const parts = [];
-  for (const p of SK.data.people.filter(p => p.login !== me)) {
-    const list = open.filter(i => (i.assignees || []).some(a => a.login === p.login)).sort(byEnd);
-    if (list.length) parts.push(h("h3", {}, nameOf(p.login)), h("div", {}, ...list.map(i => taskRow(i))));
-  }
   const free = open.filter(isFree).sort(byEnd);
-  if (free.length) parts.push(h("h3", {}, "Noch niemand zuständig"), h("div", {}, ...free.map(i => taskRow(i))));
-  $("others").replaceChildren(...(parts.length ? parts : [h("p", { class: "empty" }, "Keine offenen Aufgaben bei den anderen.")]));
+  $("free-box").hidden = !free.length;
+  $("free").replaceChildren(...free.map(i => taskRow(i)));
 
   $("done-box").hidden = !done.length;
   $("done-sum").textContent = "Erledigt (" + done.length + ")";
@@ -75,7 +70,7 @@ $("f-task").addEventListener("submit", (ev) => {
   const body = { title, labels: [CFG.areaOf[who] || "plan"] };
   if ($("t-phase").value) body.milestone = Number($("t-phase").value);
   if (who) body.assignees = [who];
-  act(async () => { await api(R + "/issues", { method: "POST", body }); $("t-title").value = ""; await SK.refresh(); }, "Aufgabe angelegt.");
+  act(async () => { const c = await api(R + "/issues", { method: "POST", body }); $("t-title").value = ""; await SK.refresh(); return () => dropTask(c.number); }, "Aufgabe angelegt.");
 });
 
 startPage("aufgaben", ["tasks"], render);

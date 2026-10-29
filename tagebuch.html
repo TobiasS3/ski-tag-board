@@ -77,8 +77,10 @@ function entry(c) {
     h("form", { class: "add", style: "margin-top:6px", onsubmit: (ev) => {
       ev.preventDefault(); const text = ta.value.trim(); if (!text) return;
       act(async () => {
+        const before = c.body;
         await api(R + "/issues/comments/" + c.id, { method: "PATCH", body: { body: "**" + AREAS[sel.value] + ":** " + text } });
         editId = null; editDraft = null; await SK.refresh();
+        return () => api(R + "/issues/comments/" + c.id, { method: "PATCH", body: { body: before } });
       }, "Eintrag geändert.");
     } }, ta, h("div", { class: "row" }, sel,
       h("button", { class: "btn", type: "submit" }, "Speichern"),
@@ -102,7 +104,8 @@ areaOptions($("f-area")); $("f-area").prepend(h("option", { value: "" }, "Alle B
 for (const id of ["f-time", "f-person", "f-area"]) $(id).addEventListener("change", renderDiary);
 $("f-log").addEventListener("submit", (ev) => {
   ev.preventDefault(); const text = $("log-text").value.trim(); if (!text) return;
-  act(async () => { await postDiary($("log-area").value, text); $("log-text").value = ""; await SK.refresh(); }, "Eingetragen.");
+  act(async () => { const c = await postDiary($("log-area").value, text); $("log-text").value = ""; await SK.refresh();
+    return () => api(R + "/issues/comments/" + c.id, { method: "DELETE" }); }, "Eingetragen.");
 });
 
 startPage("tagebuch", [], async () => {

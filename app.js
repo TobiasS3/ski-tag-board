@@ -125,7 +125,7 @@ async function loadTasks() {
   const d = SK.data;
   const [ms, issues] = await Promise.all([all(R + "/milestones?state=all"), all(R + "/issues?state=all")]);
   d.milestones = ms.sort((a, b) => String(a.due_on).localeCompare(String(b.due_on)));
-  d.issues = issues.filter(i => !i.pull_request && i.number !== CFG.diary);
+  d.issues = issues.filter(i => !i.pull_request && i.number !== CFG.diary && i.state_reason !== "not_planned");
   await Promise.all(d.issues.filter(i => i.state === "closed" && !d.closers[i.number]).map(async i => {
     try { d.closers[i.number] = (await api(R + "/issues/" + i.number)).closed_by; } catch {}
   }));
@@ -199,34 +199,50 @@ function setRangeInBody(body, start, end) {
 }
 
 // ---------- Aktionen ----------
-let busy = false;
+// Eine Aktion kann eine Funktion zurückgeben, die sie wieder rückgängig macht.
+// Dann zeigt die Leiste unten ein paar Sekunden lang „Rückgängig“.
+let busy = false, doneTimer = null;
+function showDone(text, undo) {
+  const s = $("status"); if (!s) return;
+  clearTimeout(doneTimer);
+  s.classList.remove("err"); s.hidden = !text;
+  s.replaceChildren(h("span", {}, text || ""), undo ? h("button", { class: "btn ghost undo", type: "button", onclick: () => {
+    clearTimeout(doneTimer);
+    act(async () => { await undo(); await SK.refresh(); }, "Rückgängig gemacht.");
+  } }, "Rückgängig") : "");
+  doneTimer = setTimeout(() => { if (s.firstChild && s.firstChild.textContent === text) status(""); }, undo ? 12000 : 2500);
+}
 async function act(fn, okText) {
   if (busy) return; busy = true;
-  const ctrls = document.querySelectorAll("main button, main input, main select, main textarea");
+  const ctrls = [...document.querySelectorAll("main button, main input, main select, main textarea")].filter(el => !el.disabled);
   ctrls.forEach(el => el.disabled = true);
+  clearTimeout(doneTimer);
   status("Speichere …");
   try {
-    await fn();
-    status(okText || "");
-    setTimeout(() => { if ($("status") && $("status").textContent === okText) status(""); }, 2500);
+    const undo = await fn();
+    showDone(okText || "", typeof undo === "function" ? undo : null);
   } catch (e) { if (e.message !== "401") status("Hat nicht geklappt: " + e.message, true); }
   finally { busy = false; ctrls.forEach(el => el.disabled = false); }
 }
+// Rückgängig für neu angelegte Aufgaben: als „nicht geplant“ schließen, die Seite blendet die aus
+const dropTask = (num) => api(R + "/issues/" + num, { method: "PATCH", body: { state: "closed", state_reason: "not_planned" } });
 async function setTaskState(i, closed) {
   await api(R + "/issues/" + i.number, { method: "PATCH", body: { state: closed ? "closed" : "open" } });
   delete SK.data.closers[i.number];
 }
 async function postDiary(area, text) {
-  await api(R + "/issues/" + CFG.diary + "/comments", { method: "POST", body: { body: "**" + AREAS[area] + ":** " + text } });
+  return api(R + "/issues/" + CFG.diary + "/comments", { method: "POST", body: { body: "**" + AREAS[area] + ":** " + text } });
 }
 async function askQuestion(area, to, title, details) {
   const head = to ? "An: @" + to : "An: alle";
-  await gql(`mutation($r:ID!,$c:ID!,$t:String!,$b:String!){createDiscussion(input:{repositoryId:$r,categoryId:$c,title:$t,body:$b}){discussion{id}}}`,
-    { r: SK.data.repoId, c: SK.data.qa.id, t: (area ? "[" + AREAS[area] + "] " : "") + title, b: head + "\n\n" + (details || "") });
+  return (await gql(`mutation($r:ID!,$c:ID!,$t:String!,$b:String!){createDiscussion(input:{repositoryId:$r,categoryId:$c,title:$t,body:$b}){discussion{id}}}`,
+    { r: SK.data.repoId, c: SK.data.qa.id, t: (area ? "[" + AREAS[area] + "] " : "") + title, b: head + "\n\n" + (details || "") })).createDiscussion.discussion.id;
 }
 async function answerQuestion(q, text) {
-  await gql(`mutation($d:ID!,$b:String!){addDiscussionComment(input:{discussionId:$d,body:$b}){clientMutationId}}`, { d: q.id, b: text });
+  return (await gql(`mutation($d:ID!,$b:String!){addDiscussionComment(input:{discussionId:$d,body:$b}){comment{id}}}`, { d: q.id, b: text })).addDiscussionComment.comment.id;
 }
+const deleteQuestion = (id) => gql(`mutation($i:ID!){deleteDiscussion(input:{id:$i}){clientMutationId}}`, { i: id });
+const deleteAnswer = (id) => gql(`mutation($i:ID!){deleteDiscussionComment(input:{id:$i}){clientMutationId}}`, { i: id });
 async function settleQuestion(q, done) {
   if (done) await gql(`mutation($id:ID!){closeDiscussion(input:{discussionId:$id,reason:RESOLVED}){clientMutationId}}`, { id: q.id });
   else await gql(`mutation($id:ID!){reopenDiscussion(input:{discussionId:$id}){clientMutationId}}`, { id: q.id });
@@ -258,9 +274,10 @@ const ownerName = (i) => (i.assignees || []).map(a => firstName(a.login)).join("
 async function takeOver(i) {
   await api(R + "/issues/" + i.number, { method: "PATCH", body: { assignees: [SK.me.login] } });
 }
+const giveBack = (i) => api(R + "/issues/" + i.number, { method: "PATCH", body: { assignees: [] } });
 function tickBox(i) {
   if (isMine(i)) return h("input", { type: "checkbox", id: "t-" + i.number, checked: i.state === "closed", "aria-label": "Erledigt: " + i.title,
-    onchange: (ev) => act(async () => { await setTaskState(i, ev.target.checked); await SK.refresh(); }, ev.target.checked ? "Abgehakt." : "Wieder offen.") });
+    onchange: (ev) => { const on = ev.target.checked; act(async () => { await setTaskState(i, on); await SK.refresh(); return () => setTaskState(i, !on); }, on ? "Abgehakt." : "Wieder offen."); } });
   return h("input", { type: "checkbox", checked: i.state === "closed", disabled: true, "aria-label": "Erledigt: " + i.title, title: isFree(i) ? "Erst übernehmen" : "Nur " + ownerName(i) + " kann das abhaken" });
 }
 function taskRow(i, onOpen) {
@@ -274,12 +291,12 @@ function taskRow(i, onOpen) {
         (i.assignees || []).length ? h("span", { class: "who" }, ...i.assignees.map(a => h("img", { src: a.avatar_url, alt: nameOf(a.login), title: nameOf(a.login) }))) : h("span", {}, "niemand zuständig"),
         r ? h("span", {}, r.start.toLocaleDateString("de-AT", { day: "numeric", month: "short" }) + " – " + r.end.toLocaleDateString("de-AT", { day: "numeric", month: "short" })) : null,
         i.state === "closed" ? h("span", {}, "erledigt" + (closer ? " von " + firstName(closer.login) : "") + " am " + dateOf(i.closed_at)) : null,
-        isFree(i) && i.state === "open" ? h("button", { class: "link", type: "button", onclick: () => act(async () => { await takeOver(i); await SK.refresh(); }, "Übernommen.") }, "Übernehmen") : null)),
-    h("a", { class: "small", href: i.html_url, target: "_blank", rel: "noopener", title: "Auf GitHub öffnen" }, "#" + i.number));
+        isFree(i) && i.state === "open" ? h("button", { class: "link", type: "button", onclick: () => act(async () => { await takeOver(i); await SK.refresh(); return () => giveBack(i); }, "Übernommen.") }, "Übernehmen") : null)),
+    h("span"));
 }
 
 // ---------- Rahmen: Kopf, Menü, Anmeldung ----------
-const PAGES = [["./", "aufgaben", "Aufgaben"], ["zeitplan.html", "zeitplan", "Zeitplan"], ["tagebuch.html", "tagebuch", "Tagebuch"], ["fragen.html", "fragen", "Fragen"], ["plan.html", "plan", "Businessplan"]];
+const PAGES = [["./", "aufgaben", "Meine Aufgaben"], ["tagebuch.html", "tagebuch", "Mein Tagebuch"], ["zeitplan.html", "zeitplan", "Zeitplan"], ["fragen.html", "fragen", "Fragen"], ["plan.html", "plan", "Businessplan"]];
 function shell(page) {
   const wrap = $("wrap"), main = $("main");
   const now = new Date(); now.setHours(0, 0, 0, 0);

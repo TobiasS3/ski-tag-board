@@ -61,16 +61,16 @@ function questionRow(q) {
       byOther(c.author, c.createdAt) ? h("span", { class: "pill new" }, "neu") : null),
     h("p", {}, c.body))));
   if (settled) {
-    inner.append(h("div", {}, h("button", { class: "link", type: "button", onclick: () => act(async () => { await settleQuestion(q, false); await SK.refresh(); }, "Wieder offen.") }, "wieder öffnen")));
+    inner.append(h("div", {}, h("button", { class: "link", type: "button", onclick: () => act(async () => { await settleQuestion(q, false); await SK.refresh(); return () => settleQuestion(q, true); }, "Wieder offen.") }, "wieder öffnen")));
   } else {
     const ta = h("textarea", { id: "a-" + q.number, placeholder: "Antwort schreiben …", "aria-label": "Antwort" });
     ta.value = drafts[ta.id] || "";
     inner.append(h("form", { class: "add", onsubmit: (ev) => {
       ev.preventDefault(); const text = ta.value.trim(); if (!text) return;
-      act(async () => { await answerQuestion(q, text); delete drafts[ta.id]; await SK.refresh(); }, "Antwort gespeichert.");
+      act(async () => { const id = await answerQuestion(q, text); delete drafts[ta.id]; await SK.refresh(); return () => deleteAnswer(id); }, "Antwort gespeichert.");
     } }, ta, h("div", { class: "row" },
       h("button", { class: "btn", type: "submit" }, "Antworten"),
-      h("button", { class: "btn ghost", type: "button", onclick: () => act(async () => { await settleQuestion(q, true); delete drafts[ta.id]; opened.delete(q.number); await SK.refresh(); }, "Als geklärt markiert.") }, "✓ Geklärt"))));
+      h("button", { class: "btn ghost", type: "button", onclick: () => act(async () => { await settleQuestion(q, true); delete drafts[ta.id]; opened.delete(q.number); await SK.refresh(); return () => settleQuestion(q, false); }, "Als geklärt markiert.") }, "✓ Geklärt"))));
   }
   row.append(inner);
   return row;
@@ -97,7 +97,7 @@ function render() {
 
 $("f-q").addEventListener("submit", (ev) => {
   ev.preventDefault(); const t = $("q-title").value.trim(); if (!t) return;
-  act(async () => { await askQuestion(null, $("q-to").value, t, ""); $("q-title").value = ""; await SK.refresh(); }, "Frage gestellt.");
+  act(async () => { const id = await askQuestion(null, $("q-to").value, t, ""); $("q-title").value = ""; await SK.refresh(); return () => deleteQuestion(id); }, "Frage gestellt.");
 });
 
 startPage("fragen", [], async () => {
