@@ -10,10 +10,23 @@ const CFG = {
   range: [new Date(2026, 9, 26), new Date(2028, 2, 1)],
   // Bereich, der bei neuen Aufgaben automatisch gesetzt wird
   areaOf: { "Ma-xi": "hardware", Lukcoderc: "netzwerk", TobiasS3: "wirtschaft" },
+  // falls jemand bei GitHub keinen Namen eingetragen hat
+  names: { "Ma-xi": "Maximilian Joszt", Lukcoderc: "Lukas Eder", TobiasS3: "Tobias Strobl" },
 };
 const AREAS = { hardware: "Hardware", netzwerk: "Netzwerk", wirtschaft: "Wirtschaft & Verkauf", app: "App", plan: "Plan" };
 const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen2"; // „2“: Stand einmal zurückgesetzt, damit die letzten 7 Tage als neu erscheinen
 const R = "/repos/" + CFG.owner + "/" + CFG.repo;
+const APP_VERSION = "1793288312"; // wird von bump.py gesetzt
+
+// Läuft schon eine neuere Version online? Dann einmal frisch laden, damit nicht alte und neue Teile gemischt werden.
+async function checkVersion() {
+  try {
+    const r = await fetch("version.json?x=" + Date.now(), { cache: "no-store" });
+    const { v } = await r.json();
+    const here = new URLSearchParams(location.search).get("r");
+    if (v && v !== APP_VERSION && here !== v) location.replace(location.pathname + "?r=" + v + location.hash);
+  } catch {}
+}
 
 const SK = {
   token: null, me: null,
@@ -120,7 +133,7 @@ async function loadPeople() {
   d.people = await all(R + "/collaborators");
   await Promise.all(d.people.map(async p => {
     if (d.names[p.login]) return;
-    try { const u = await api("/users/" + p.login); d.names[p.login] = u.name || p.login; } catch { d.names[p.login] = p.login; }
+    try { const u = await api("/users/" + p.login); d.names[p.login] = u.name || CFG.names[p.login] || p.login; } catch { d.names[p.login] = CFG.names[p.login] || p.login; }
   }));
 }
 async function loadTasks() {
@@ -426,6 +439,7 @@ async function boot() {
 
 // Jede Seite ruft das auf: welche Daten sie braucht und wie sie sich zeichnet.
 function startPage(page, needs, render) {
+  checkVersion();
   SK.page = page;
   pageNeeds = ["people", "questions", "diary", "tasks", ...needs];
   pageRender = render;
