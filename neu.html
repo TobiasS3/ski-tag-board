@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=1793287130">
+<link rel="stylesheet" href="style.css?v=1793287312">
 </head>
 <body>
 <div class="wrap" id="wrap">
@@ -22,7 +22,7 @@
     </section>
   </main>
 </div>
-<script src="app.js?v=1793287130"></script>
+<script src="app.js?v=1793287312"></script>
 <script>
 function render() {
   const items = newItems(SK.prevSeen);
@@ -32,22 +32,32 @@ function render() {
       ? "Alles gelesen. Seit deinem letzten Besuch hat niemand etwas Neues geschrieben."
       : "Das ist dein erster Besuch hier. Ab jetzt siehst du an dieser Stelle alles, was die anderen neu schreiben."));
   }
-  $("news").replaceChildren(...items.map(it => h("a", { class: "new-item", href: it.href },
+  $("news").replaceChildren(...items.map(it => h("div", { class: "new-item" },
     h("span", { class: "dot", "aria-hidden": "true" }), av(it.who),
-    h("div", {},
+    h("a", { class: "new-link", href: it.href, onclick: () => setRead(it.id, true) },
       h("div", { class: "kind" }, it.kind),
       h("div", { class: "small muted" }, h("b", { style: "color:var(--ink)" }, firstName(it.who && it.who.login)), " · " + ago(it.at), it.area ? " · " : "", it.area ? chip(it.area) : null),
       h("p", {}, it.text.length > 220 ? it.text.slice(0, 220) + " …" : it.text),
-      it.sub ? h("div", { class: "small muted" }, it.sub) : null))));
+      it.sub ? h("div", { class: "small muted" }, it.sub) : null),
+    h("button", { class: "btn ghost small", type: "button", onclick: () => markRead(it) }, "✓ Gelesen"))));
+}
+
+function markRead(it) {
+  setRead(it.id, true); render(); renderUserbox();
+  showDone("Als gelesen markiert.", async () => { setRead(it.id, false); });
 }
 
 // „Alles gelesen“: ab jetzt gilt nur noch, was danach kommt
 $("read-all").addEventListener("click", () => {
-  const now = Date.now();
+  const now = Date.now(), before = SK.prevSeen;
   SK.prevSeen = now;
   try { sessionStorage.setItem(SEEN_KEY + "-neu", String(now)); } catch {}
   store(SEEN_KEY + "-neu", String(now));
   render(); renderUserbox();
+  showDone("Alles als gelesen markiert.", async () => {
+    SK.prevSeen = before; store(SEEN_KEY + "-neu", String(before));
+    try { sessionStorage.setItem(SEEN_KEY + "-neu", String(before)); } catch {}
+  });
 });
 
 startPage("neu", [], render);

@@ -220,9 +220,11 @@ details.more > summary { cursor: pointer; color: var(--muted); font-size: 15px; 
 @media (max-width: 640px) { .tabs { flex-wrap: wrap; overflow: visible; } .tabs a { padding: 6px 10px; font-size: 17px; } }
 
 /* Seite „Neu“ */
-.new-item { display: grid; grid-template-columns: 14px 28px 1fr; gap: 10px; align-items: start; padding: 12px 0; border-top: 1px solid var(--line); text-decoration: none; color: inherit; }
+.new-item { display: grid; grid-template-columns: 14px 28px 1fr auto; gap: 10px; align-items: start; padding: 12px 0; border-top: 1px solid var(--line); }
+.new-link { text-decoration: none; color: inherit; min-width: 0; }
 .new-item:first-child { border-top: 0; }
 .new-item .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--p-gelb); margin-top: 8px; box-shadow: 0 0 10px var(--p-gelb); }
 .new-item .kind { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--p-gelb); }
 .new-item p { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.new-item:hover p { text-decoration: underline; }
+.new-link:hover p { text-decoration: underline; }
+@media (max-width: 520px) { .new-item { grid-template-columns: 14px 28px 1fr; } .new-item > .btn { grid-column: 3; justify-self: start; } }

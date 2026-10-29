@@ -183,17 +183,25 @@ function newItems(base) {
   const other = (u, iso) => u && u.login !== me && newerThan(iso, base);
   for (const c of SK.data.diary) if (other(c.user, c.created_at)) {
     const e = parseEntry(c.body);
-    out.push({ at: c.created_at, who: c.user, kind: "Tagebuch", area: e.area, text: e.text, href: "tagebuch.html" });
+    out.push({ id: "d" + c.id, at: c.created_at, who: c.user, kind: "Tagebuch", area: e.area, text: e.text, href: "tagebuch.html" });
   }
   for (const q of SK.data.questions) {
     const to = recipientOf(q);
-    if (other(q.author, q.createdAt)) out.push({ at: q.createdAt, who: q.author, kind: to === me ? "Frage an dich" : "Neue Frage", text: cleanTitle(q.title), href: "fragen.html#q" + q.number });
+    if (other(q.author, q.createdAt)) out.push({ id: "q" + q.id, at: q.createdAt, who: q.author, kind: to === me ? "Frage an dich" : "Neue Frage", text: cleanTitle(q.title), href: "fragen.html#q" + q.number });
     for (const c of q.comments.nodes) if (other(c.author, c.createdAt))
-      out.push({ at: c.createdAt, who: c.author, kind: "Antwort", text: c.body, sub: "auf: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
+      out.push({ id: "c" + c.id, at: c.createdAt, who: c.author, kind: "Antwort", text: c.body, sub: "auf: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
   }
   for (const i of SK.data.issues) if (i.state === "open" && other(i.user, i.created_at) && (isMine(i) || isFree(i)))
-    out.push({ at: i.created_at, who: i.user, kind: isMine(i) ? "Neue Aufgabe für dich" : "Neue Aufgabe", text: i.title, href: isMine(i) ? "./" : "zeitplan.html" });
-  return out.sort((a, b) => b.at.localeCompare(a.at));
+    out.push({ id: "i" + i.number, at: i.created_at, who: i.user, kind: isMine(i) ? "Neue Aufgabe für dich" : "Neue Aufgabe", text: i.title, href: isMine(i) ? "./" : "zeitplan.html" });
+  const read = readIds();
+  return out.filter(x => !read.has(x.id)).sort((a, b) => b.at.localeCompare(a.at));
+}
+// einzeln als gelesen markierte Einträge (nur in diesem Browser)
+const READ_KEY = "skitag-read";
+function readIds() { try { return new Set(JSON.parse(load(READ_KEY) || "[]")); } catch { return new Set(); } }
+function setRead(id, on) {
+  const r = readIds(); on ? r.add(id) : r.delete(id);
+  store(READ_KEY, JSON.stringify([...r].slice(-500)));
 }
 const newDiaryCount = () => SK.data.diary.filter(c => c.user && c.user.login !== SK.me.login && newerThan(c.created_at, seenOf("tagebuch"))).length;
 const openQuestionsFor = (login) => SK.data.questions.filter(q => !isSettled(q) && recipientOf(q) === login);
@@ -408,7 +416,7 @@ async function boot() {
     SK.prevSeen = seen;
     try { sessionStorage.setItem(key, String(seen)); } catch {}
     await refresh();
-    store(key, String(Date.now()));
+    if (SK.page !== "neu") store(key, String(Date.now()));
     status("");
   } catch (e) { if (e.message !== "401") status("Laden hat nicht geklappt: " + e.message, true); }
 }
