@@ -28,7 +28,7 @@
     </section>
 
     <section class="panel">
-      <div class="panel-head"><h2>Alle Fragen</h2>
+      <div class="panel-head"><h2>Fragen</h2>
         <div class="seg" role="group" aria-label="Filter">
           <button type="button" data-f="open" aria-pressed="true">offen</button>
           <button type="button" data-f="all" aria-pressed="false">alle</button>
@@ -45,39 +45,39 @@ const drafts = {};
 
 function renderQuestions() {
   const me = SK.me.login;
-  let qs = SK.data.questions;
   if (!SK.data.qa) return $("q-list").replaceChildren(h("p", { class: "empty" }, "Im Repo fehlt der Q&A-Bereich der Discussions."));
-  if (filter === "open") qs = qs.filter(q => !q.isAnswered);
-  if (filter === "me") qs = qs.filter(q => recipientOf(q) === me);
-  if (filter === "mine") qs = qs.filter(q => q.author && q.author.login === me);
-  qs = [...qs].sort((a, b) => a.isAnswered - b.isAnswered || b.createdAt.localeCompare(a.createdAt));
-  if (!qs.length) return $("q-list").replaceChildren(h("p", { class: "empty" }, filter === "open" ? "Keine offenen Fragen." : "Hier ist nichts."));
-  // offene Antwort-Entwürfe behalten
+  let qs = SK.data.questions;
+  if (filter === "open") qs = qs.filter(q => !isSettled(q));
+  qs = [...qs].sort((a, b) => isSettled(a) - isSettled(b) || b.createdAt.localeCompare(a.createdAt));
+  if (!qs.length) return $("q-list").replaceChildren(h("p", { class: "empty" }, filter === "open" ? "Keine offenen Fragen." : "Noch keine Fragen."));
+  // angefangene Antworten behalten
   document.querySelectorAll("#q-list textarea").forEach(t => drafts[t.id] = t.value);
   $("q-list").replaceChildren(...qs.map(q => {
-    const to = recipientOf(q), area = areaOfQuestion(q), body = bodyWithoutRecipient(q.body);
+    const to = recipientOf(q), area = areaOfQuestion(q), body = bodyWithoutRecipient(q.body), settled = isSettled(q);
+    const meta = h("span", { class: "muted" }, firstName(q.author && q.author.login) + " → " + (to ? firstName(to) : "alle") + " · " + ago(q.createdAt));
+    // geklärte Fragen nur als kurze Zeile
+    if (settled) return h("div", { class: "q", id: "q" + q.number },
+      h("div", { class: "row small" }, h("span", { class: "pill done" }, "geklärt"), area ? chip(area) : null, meta,
+        h("button", { class: "link", type: "button", onclick: () => act(async () => { await settleQuestion(q, false); await SK.refresh(); }, "Wieder offen.") }, "wieder öffnen")),
+      h("div", { class: "title muted" }, cleanTitle(q.title)));
     const ta = h("textarea", { id: "a-" + q.number, placeholder: "Antwort schreiben …", "aria-label": "Antwort" });
     ta.value = drafts[ta.id] || "";
-    const canMark = (q.author && q.author.login === me) || (SK.me.login === CFG.owner);
     return h("div", { class: "q" + (isNew(q.createdAt) ? " is-new" : ""), id: "q" + q.number },
       h("div", { class: "row small" },
-        h("span", { class: "pill " + (q.isAnswered ? "done" : "open") }, q.isAnswered ? "gelöst" : "offen"),
-        area ? chip(area) : null,
-        h("span", { class: "muted" }, firstName(q.author && q.author.login) + " → " + (to ? firstName(to) : "alle") + " · " + ago(q.createdAt)),
-        to === me && !q.isAnswered ? h("span", { class: "pill new" }, "an dich") : null,
-        h("a", { href: q.url, target: "_blank", rel: "noopener" }, "auf GitHub")),
+        h("span", { class: "pill open" }, "offen"), area ? chip(area) : null, meta,
+        to === me ? h("span", { class: "pill new" }, "an dich") : null),
       h("div", { class: "title" }, cleanTitle(q.title)),
       body && body !== "(keine Details)" ? h("div", { class: "body" }, body) : null,
-      ...q.comments.nodes.map(c => h("div", { class: "cmt" + (c.isAnswer ? " answer" : "") }, av(c.author), h("div", {},
+      ...q.comments.nodes.map(c => h("div", { class: "cmt" }, av(c.author), h("div", {},
         h("div", { class: "row small" }, h("b", {}, nameOf(c.author && c.author.login)), h("span", { class: "muted" }, ago(c.createdAt)),
-          isNew(c.createdAt) ? h("span", { class: "pill new" }, "neu") : null,
-          c.isAnswer ? h("span", { class: "pill done" }, "Lösung") : canMark ? h("button", { class: "link", type: "button",
-            onclick: () => act(async () => { await markAnswer(c.id); await SK.refresh(); }, "Als Lösung markiert.") }, "Als Lösung markieren") : null),
+          isNew(c.createdAt) ? h("span", { class: "pill new" }, "neu") : null),
         h("p", {}, c.body)))),
       h("form", { class: "add", onsubmit: (ev) => {
         ev.preventDefault(); const text = ta.value.trim(); if (!text) return;
         act(async () => { await answerQuestion(q, text); delete drafts[ta.id]; ta.value = ""; await SK.refresh(); }, "Antwort gespeichert.");
-      } }, ta, h("div", { class: "row" }, h("button", { class: "btn", type: "submit" }, "Antworten"))));
+      } }, ta, h("div", { class: "row" },
+        h("button", { class: "btn", type: "submit" }, "Antworten"),
+        h("button", { class: "btn ghost", type: "button", onclick: () => act(async () => { await settleQuestion(q, true); delete drafts[ta.id]; await SK.refresh(); }, "Als geklärt markiert.") }, "✓ Geklärt"))));
   }));
   if (location.hash && !renderQuestions.jumped) { const el = document.querySelector(location.hash); if (el) { el.scrollIntoView(); renderQuestions.jumped = true; } }
 }

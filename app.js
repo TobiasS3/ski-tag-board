@@ -132,7 +132,7 @@ async function loadQuestions() {
   const res = await gql(`query($o:String!,$r:String!){repository(owner:$o,name:$r){id
     discussionCategories(first:20){nodes{id name slug}}
     discussions(first:60,orderBy:{field:CREATED_AT,direction:DESC}){nodes{
-      id number title body url createdAt isAnswered category{slug}
+      id number title body url createdAt isAnswered closed closedAt category{slug}
       author{login avatarUrl}
       comments(first:40){nodes{id body createdAt isAnswer author{login avatarUrl}}}}}}}`, { o: CFG.owner, r: CFG.repo });
   const repo = res.repository, d = SK.data;
@@ -160,9 +160,11 @@ function recipientOf(q) {
 }
 const bodyWithoutRecipient = (b) => (b || "").replace(/^An:\s*(@[A-Za-z0-9-]+|alle)\s*\n?/m, "").trim();
 const openTasksOf = (login) => SK.data.issues.filter(i => i.state === "open" && (i.assignees || []).some(a => a.login === login));
+// geklärt = geschlossen (oder auf GitHub eine Antwort als Lösung markiert)
+const isSettled = (q) => q.closed || q.isAnswered;
 const newAnswersFor = (login) => SK.data.questions.filter(q => q.author && q.author.login === login &&
   q.comments.nodes.some(c => c.author && c.author.login !== login && isNew(c.createdAt)));
-const openQuestionsFor = (login) => SK.data.questions.filter(q => !q.isAnswered && recipientOf(q) === login);
+const openQuestionsFor = (login) => SK.data.questions.filter(q => !isSettled(q) && recipientOf(q) === login);
 
 // Zeitraum einer Aufgabe: „Zeitraum: 2026-11-03 – 2026-11-20“ im Text, sonst der Monat des Milestones
 const RANGE_RE = /^Zeitraum:\s*(\d{4}-\d{2}-\d{2})\s*[–-]+\s*(\d{4}-\d{2}-\d{2})\s*$/m;
@@ -214,8 +216,9 @@ async function askQuestion(area, to, title, details) {
 async function answerQuestion(q, text) {
   await gql(`mutation($d:ID!,$b:String!){addDiscussionComment(input:{discussionId:$d,body:$b}){clientMutationId}}`, { d: q.id, b: text });
 }
-async function markAnswer(commentId) {
-  await gql(`mutation($id:ID!){markDiscussionCommentAsAnswer(input:{id:$id}){clientMutationId}}`, { id: commentId });
+async function settleQuestion(q, done) {
+  if (done) await gql(`mutation($id:ID!){closeDiscussion(input:{discussionId:$id,reason:RESOLVED}){clientMutationId}}`, { id: q.id });
+  else await gql(`mutation($id:ID!){reopenDiscussion(input:{discussionId:$id}){clientMutationId}}`, { id: q.id });
 }
 
 // ---------- gemeinsame Bausteine ----------
@@ -302,7 +305,7 @@ function renderUserbox() {
   box.replaceChildren(h("img", { src: SK.me.avatar_url, alt: "" }), h("span", {}, firstName(SK.me.login)),
     h("button", { class: "link", type: "button", onclick: () => act(SK.refresh, "Aktualisiert.") }, "Aktualisieren"),
     h("button", { class: "link", type: "button", onclick: () => logout() }, "Abmelden"));
-  const open = SK.data.questions.filter(q => !q.isAnswered).length, n = $("nav-q");
+  const open = SK.data.questions.filter(q => !isSettled(q)).length, n = $("nav-q");
   if (n) { n.textContent = open; n.hidden = !open; }
 }
 function logout(msg) {
