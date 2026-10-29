@@ -48,7 +48,10 @@ code { font-size: .9em; }
   color: var(--muted); text-decoration: none; padding: 8px 12px; border-bottom: 3px solid transparent; margin-bottom: -2px; white-space: nowrap;
 }
 .tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
-.tabs .n { font-family: var(--font-body); font-size: 13px; font-weight: 600; background: var(--sos); color: #fff; border-radius: 999px; padding: 0 7px; margin-left: 4px; vertical-align: 2px; }
+.tabs .n { font-family: var(--font-body); font-size: 13px; font-weight: 700; background: var(--p-gelb); color: #1b1f24; border-radius: 999px; padding: 0 7px; margin-left: 4px; vertical-align: 2px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--p-gelb) 30%, transparent), 0 0 12px var(--p-gelb); }
+@media (prefers-reduced-motion: no-preference) { .tabs .n { animation: glow 1.8s ease-in-out infinite; } }
+@keyframes glow { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--p-gelb) 15%, transparent), 0 0 18px var(--p-gelb); } }
 .userbox { display: flex; gap: 12px; align-items: center; font-size: 14px; padding-bottom: 8px; color: var(--muted); }
 .userbox img { width: 24px; height: 24px; border-radius: 50%; }
 
@@ -215,3 +218,11 @@ details.more > summary { cursor: pointer; color: var(--muted); font-size: 15px; 
 .confirm-q { font-weight: 700; color: var(--sos); }
 .item .top .del { align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 @media (max-width: 640px) { .tabs { flex-wrap: wrap; overflow: visible; } .tabs a { padding: 6px 10px; font-size: 17px; } }
+
+/* Seite „Neu“ */
+.new-item { display: grid; grid-template-columns: 14px 28px 1fr; gap: 10px; align-items: start; padding: 12px 0; border-top: 1px solid var(--line); text-decoration: none; color: inherit; }
+.new-item:first-child { border-top: 0; }
+.new-item .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--p-gelb); margin-top: 8px; box-shadow: 0 0 10px var(--p-gelb); }
+.new-item .kind { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--p-gelb); }
+.new-item p { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.new-item:hover p { text-decoration: underline; }

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Neu · Ski Tag Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap" id="wrap">
+  <main id="main" hidden>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Neu seit deinem letzten Besuch</h2>
+        <button class="btn ghost small" type="button" id="read-all" hidden>Alles gelesen</button>
+      </div>
+      <div id="news"></div>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+<script>
+function render() {
+  const items = newItems(SK.prevSeen);
+  $("read-all").hidden = !items.length;
+  if (!items.length) {
+    return $("news").replaceChildren(h("p", { class: "empty" }, SK.prevSeen
+      ? "Alles gelesen. Seit deinem letzten Besuch hat niemand etwas Neues geschrieben."
+      : "Das ist dein erster Besuch hier. Ab jetzt siehst du an dieser Stelle alles, was die anderen neu schreiben."));
+  }
+  $("news").replaceChildren(...items.map(it => h("a", { class: "new-item", href: it.href },
+    h("span", { class: "dot", "aria-hidden": "true" }), av(it.who),
+    h("div", {},
+      h("div", { class: "kind" }, it.kind),
+      h("div", { class: "small muted" }, h("b", { style: "color:var(--ink)" }, firstName(it.who && it.who.login)), " · " + ago(it.at), it.area ? " · " : "", it.area ? chip(it.area) : null),
+      h("p", {}, it.text.length > 220 ? it.text.slice(0, 220) + " …" : it.text),
+      it.sub ? h("div", { class: "small muted" }, it.sub) : null))));
+}
+
+// „Alles gelesen“: ab jetzt gilt nur noch, was danach kommt
+$("read-all").addEventListener("click", () => {
+  const now = Date.now();
+  SK.prevSeen = now;
+  try { sessionStorage.setItem(SEEN_KEY + "-neu", String(now)); } catch {}
+  store(SEEN_KEY + "-neu", String(now));
+  render(); renderUserbox();
+});
+
+startPage("neu", [], render);
+</script>
+</body>
+</html>

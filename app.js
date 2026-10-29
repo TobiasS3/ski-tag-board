@@ -176,6 +176,24 @@ function questionsToNotice() {
   return SK.data.questions.filter(q => (!isSettled(q) && recipientOf(q) === me) ||
     byOther(q.author, q.createdAt) || q.comments.nodes.some(c => byOther(c.author, c.createdAt)));
 }
+// Alles, was andere seit „base“ geschrieben haben – für die Seite „Neu“ und ihr Licht im Menü
+function newItems(base) {
+  const me = SK.me.login, out = [];
+  const other = (u, iso) => u && u.login !== me && newerThan(iso, base);
+  for (const c of SK.data.diary) if (other(c.user, c.created_at)) {
+    const e = parseEntry(c.body);
+    out.push({ at: c.created_at, who: c.user, kind: "Tagebuch", area: e.area, text: e.text, href: "tagebuch.html" });
+  }
+  for (const q of SK.data.questions) {
+    const to = recipientOf(q);
+    if (other(q.author, q.createdAt)) out.push({ at: q.createdAt, who: q.author, kind: to === me ? "Frage an dich" : "Neue Frage", text: cleanTitle(q.title), href: "fragen.html#q" + q.number });
+    for (const c of q.comments.nodes) if (other(c.author, c.createdAt))
+      out.push({ at: c.createdAt, who: c.author, kind: "Antwort", text: c.body, sub: "auf: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
+  }
+  for (const i of SK.data.issues) if (i.state === "open" && other(i.user, i.created_at) && (isMine(i) || isFree(i)))
+    out.push({ at: i.created_at, who: i.user, kind: isMine(i) ? "Neue Aufgabe für dich" : "Neue Aufgabe", text: i.title, href: isMine(i) ? "./" : "zeitplan.html" });
+  return out.sort((a, b) => b.at.localeCompare(a.at));
+}
 const newDiaryCount = () => SK.data.diary.filter(c => c.user && c.user.login !== SK.me.login && newerThan(c.created_at, seenOf("tagebuch"))).length;
 const openQuestionsFor = (login) => SK.data.questions.filter(q => !isSettled(q) && recipientOf(q) === login);
 
@@ -319,7 +337,7 @@ function taskRow(i, onOpen) {
 }
 
 // ---------- Rahmen: Kopf, Menü, Anmeldung ----------
-const PAGES = [["./", "aufgaben", "Meine Aufgaben"], ["tagebuch.html", "tagebuch", "Mein Tagebuch"], ["zeitplan.html", "zeitplan", "Zeitplan"], ["fragen.html", "fragen", "Fragen"], ["plan.html", "plan", "Businessplan"]];
+const PAGES = [["neu.html", "neu", "Neu"], ["./", "aufgaben", "Meine Aufgaben"], ["tagebuch.html", "tagebuch", "Mein Tagebuch"], ["zeitplan.html", "zeitplan", "Zeitplan"], ["fragen.html", "fragen", "Fragen"], ["plan.html", "plan", "Businessplan"]];
 function shell(page) {
   const wrap = $("wrap"), main = $("main");
   const now = new Date(); now.setHours(0, 0, 0, 0);
@@ -330,7 +348,7 @@ function shell(page) {
     h("div", { class: "count" }, h("b", {}, days), h("span", {}, "Tage bis zur Präsentation bei KitzSki (Feb 2027)")));
   const nav = h("div", { class: "navbar" },
     h("nav", { class: "tabs" }, ...PAGES.map(([href, key, label]) =>
-      h("a", { href, "aria-current": key === page ? "page" : null }, label, key === "fragen" || key === "tagebuch" ? h("span", { class: "n", id: "nav-" + key, hidden: true }) : null))),
+      h("a", { href, "aria-current": key === page ? "page" : null }, label, ["neu", "fragen", "tagebuch"].includes(key) ? h("span", { class: "n", id: "nav-" + key, hidden: true }) : null))),
     h("div", { class: "userbox", id: "userbox" }));
   const login = h("section", { class: "panel login", id: "login", hidden: true },
     h("h2", {}, "Anmelden"),
@@ -359,6 +377,7 @@ function renderUserbox() {
   const badge = (id, n) => { const el = $(id); if (el) { el.textContent = n; el.hidden = !n; } };
   badge("nav-fragen", questionsToNotice().length);
   badge("nav-tagebuch", newDiaryCount());
+  badge("nav-neu", newItems(seenOf("neu")).length);
 }
 function logout(msg) {
   SK.token = null; SK.me = null; store(TOKEN_KEY, null);
@@ -396,7 +415,7 @@ async function boot() {
 // Jede Seite ruft das auf: welche Daten sie braucht und wie sie sich zeichnet.
 function startPage(page, needs, render) {
   SK.page = page;
-  pageNeeds = ["people", "questions", "diary", ...needs];
+  pageNeeds = ["people", "questions", "diary", "tasks", ...needs];
   pageRender = render;
   shell(page);
   SK.token = load(TOKEN_KEY);
