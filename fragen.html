@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Fragen · Ski Tag Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap" id="wrap">
+  <main id="main" hidden>
+    <section class="panel">
+      <h2>Frage stellen</h2>
+      <form class="add" id="f-q">
+        <input type="text" id="q-title" placeholder="z. B. Kann die App „SOS ist angekommen“ anzeigen?" required aria-label="Frage">
+        <textarea id="q-body" placeholder="Mehr Details (optional)" aria-label="Details"></textarea>
+        <div class="row">
+          <label class="f">An wen<select id="q-to"></select></label>
+          <label class="f">Bereich<select id="q-area"></select></label>
+          <button class="btn" type="submit" style="align-self:end">Fragen</button>
+        </div>
+        <p class="muted small" style="margin:0">Wer gefragt wird, sieht die Frage auf seiner Startseite und bekommt eine Mail von GitHub.</p>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Alle Fragen</h2>
+        <div class="seg" role="group" aria-label="Filter">
+          <button type="button" data-f="open" aria-pressed="true">offen</button>
+          <button type="button" data-f="me" aria-pressed="false">an mich</button>
+          <button type="button" data-f="mine" aria-pressed="false">von mir</button>
+          <button type="button" data-f="all" aria-pressed="false">alle</button>
+        </div>
+      </div>
+      <div id="q-list"></div>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+<script>
+let filter = "open";
+const drafts = {};
+
+function renderQuestions() {
+  const me = SK.me.login;
+  let qs = SK.data.questions;
+  if (!SK.data.qa) return $("q-list").replaceChildren(h("p", { class: "empty" }, "Im Repo fehlt der Q&A-Bereich der Discussions."));
+  if (filter === "open") qs = qs.filter(q => !q.isAnswered);
+  if (filter === "me") qs = qs.filter(q => recipientOf(q) === me);
+  if (filter === "mine") qs = qs.filter(q => q.author && q.author.login === me);
+  qs = [...qs].sort((a, b) => a.isAnswered - b.isAnswered || b.createdAt.localeCompare(a.createdAt));
+  if (!qs.length) return $("q-list").replaceChildren(h("p", { class: "empty" }, filter === "open" ? "Keine offenen Fragen." : "Hier ist nichts."));
+  // offene Antwort-Entwürfe behalten
+  document.querySelectorAll("#q-list textarea").forEach(t => drafts[t.id] = t.value);
+  $("q-list").replaceChildren(...qs.map(q => {
+    const to = recipientOf(q), area = areaOfQuestion(q), body = bodyWithoutRecipient(q.body);
+    const ta = h("textarea", { id: "a-" + q.number, placeholder: "Antwort schreiben …", "aria-label": "Antwort" });
+    ta.value = drafts[ta.id] || "";
+    const canMark = (q.author && q.author.login === me) || (SK.me.login === CFG.owner);
+    return h("div", { class: "q" + (isNew(q.createdAt) ? " is-new" : ""), id: "q" + q.number },
+      h("div", { class: "row small" },
+        h("span", { class: "pill " + (q.isAnswered ? "done" : "open") }, q.isAnswered ? "gelöst" : "offen"),
+        area ? chip(area) : null,
+        h("span", { class: "muted" }, firstName(q.author && q.author.login) + " → " + (to ? firstName(to) : "alle") + " · " + ago(q.createdAt)),
+        to === me && !q.isAnswered ? h("span", { class: "pill new" }, "an dich") : null,
+        h("a", { href: q.url, target: "_blank", rel: "noopener" }, "auf GitHub")),
+      h("div", { class: "title" }, cleanTitle(q.title)),
+      body && body !== "(keine Details)" ? h("div", { class: "body" }, body) : null,
+      ...q.comments.nodes.map(c => h("div", { class: "cmt" + (c.isAnswer ? " answer" : "") }, av(c.author), h("div", {},
+        h("div", { class: "row small" }, h("b", {}, nameOf(c.author && c.author.login)), h("span", { class: "muted" }, ago(c.createdAt)),
+          isNew(c.createdAt) ? h("span", { class: "pill new" }, "neu") : null,
+          c.isAnswer ? h("span", { class: "pill done" }, "Lösung") : canMark ? h("button", { class: "link", type: "button",
+            onclick: () => act(async () => { await markAnswer(c.id); await SK.refresh(); }, "Als Lösung markiert.") }, "Als Lösung markieren") : null),
+        h("p", {}, c.body)))),
+      h("form", { class: "add", onsubmit: (ev) => {
+        ev.preventDefault(); const text = ta.value.trim(); if (!text) return;
+        act(async () => { await answerQuestion(q, text); delete drafts[ta.id]; ta.value = ""; await SK.refresh(); }, "Antwort gespeichert.");
+      } }, ta, h("div", { class: "row" }, h("button", { class: "btn", type: "submit" }, "Antworten"))));
+  }));
+  if (location.hash && !renderQuestions.jumped) { const el = document.querySelector(location.hash); if (el) { el.scrollIntoView(); renderQuestions.jumped = true; } }
+}
+
+areaOptions($("q-area")); $("q-area").value = "app";
+$("f-q").addEventListener("submit", (ev) => {
+  ev.preventDefault(); const t = $("q-title").value.trim(); if (!t) return;
+  act(async () => {
+    await askQuestion($("q-area").value, $("q-to").value, t, $("q-body").value.trim());
+    $("q-title").value = ""; $("q-body").value = ""; await SK.refresh();
+  }, "Frage gestellt.");
+});
+document.querySelectorAll("[data-f]").forEach(b => b.addEventListener("click", () => {
+  filter = b.dataset.f; document.querySelectorAll("[data-f]").forEach(x => x.setAttribute("aria-pressed", x === b)); renderQuestions();
+}));
+if (location.hash) { filter = "all"; document.querySelectorAll("[data-f]").forEach(x => x.setAttribute("aria-pressed", x.dataset.f === "all")); }
+
+startPage("fragen", [], async () => {
+  peopleOptions($("q-to"), "An alle");
+  renderQuestions();
+});
+</script>
+</body>
+</html>

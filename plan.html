@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Businessplan · Ski Tag Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="wrap" id="wrap">
+  <main id="main" hidden>
+    <div class="grid2">
+      <section class="panel">
+        <div class="panel-head"><h2>Fortschritt pro Bereich</h2><a class="small" href="zeitplan.html">zum Zeitplan</a></div>
+        <div class="chart-box"><canvas id="c-areas" aria-label="Erledigte und offene Aufgaben pro Bereich" role="img"></canvas></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h2>Wer arbeitet wie viel</h2><span class="muted small">Tagebuch-Einträge und erledigte Aufgaben, letzte 14 Tage</span></div>
+        <div class="chart-box"><canvas id="c-people" aria-label="Aktivität pro Person" role="img"></canvas></div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Kosten &amp; Einnahmen</h2><span class="muted small" id="cost-info"></span></div>
+      <p class="muted small" style="margin:0">Beträge in Euro eintragen, leer lassen, wenn noch offen. Gespeichert wird in <code>daten/kosten.json</code> im Repo.</p>
+      <div class="table-scroll">
+        <table class="costs">
+          <thead><tr><th>Kosten</th><th>Art</th><th class="num">Betrag €</th><th></th></tr></thead>
+          <tbody id="cost-rows"></tbody>
+        </table>
+        <div class="row" style="margin-top:8px"><button class="link" type="button" id="add-cost">+ Posten hinzufügen</button></div>
+      </div>
+      <div class="chart-box" id="cost-chart"><canvas id="c-costs" aria-label="Kosten nach Posten" role="img"></canvas></div>
+      <p class="empty small" id="cost-empty" hidden>Sobald Beträge eingetragen sind, erscheint hier ein Kreisdiagramm mit der Aufteilung.</p>
+      <div class="table-scroll">
+        <table class="costs">
+          <thead><tr><th>Einnahmen</th><th>Einheit</th><th class="num">Preis €</th><th></th></tr></thead>
+          <tbody id="income-rows"></tbody>
+        </table>
+        <div class="row" style="margin-top:8px"><button class="link" type="button" id="add-income">+ Einnahme hinzufügen</button></div>
+      </div>
+      <div class="stats" id="cost-stats"></div>
+      <div class="row"><button class="btn" type="button" id="save-costs">Kosten speichern</button><span class="muted small" id="cost-dirty"></span></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Businessplan</h2><a class="small" id="plan-edit" target="_blank" rel="noopener">Auf GitHub bearbeiten</a></div>
+      <iframe class="plan-frame" id="plan-frame" title="Ski Tag Plan" sandbox="allow-same-origin"></iframe>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+<script>
+const DEFAULT_COSTS = {
+  kosten: [
+    { name: "Chip-Hardware (pro Stück)", art: "einmalig", betrag: null },
+    { name: "Chip-Prototypen für den Test", art: "einmalig", betrag: null },
+    { name: "LoRa-Empfänger an den Stationen", art: "einmalig + Montage", betrag: null },
+    { name: "Server / Hosting", art: "laufend", betrag: null },
+    { name: "Automat bzw. Ausgabe an der Kassa", art: "einmalig", betrag: null },
+    { name: "Zulassung (CE, Funk)", art: "einmalig", betrag: null },
+    { name: "Versicherung / Haftung (SOS)", art: "laufend", betrag: null },
+    { name: "Apple-Entwicklerkonto (iOS)", art: "jährlich", betrag: null },
+  ],
+  einnahmen: [
+    { name: "Chip-Miete", art: "pro Tag", betrag: null },
+    { name: "Skischul-Abo", art: "pro Saison", betrag: null },
+    { name: "Bergbahn (Lizenz oder Beteiligung)", art: "offen", betrag: null },
+  ],
+};
+let costs = null, costSha = null, dirty = false, charts = {};
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const euro = (n) => n.toLocaleString("de-AT", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+const AREA_COLORS = { netzwerk: "--p-blau", hardware: "--p-rot", app: "--p-schwarz", kosten: "--p-gelb", plan: "--p-grau" };
+
+function chart(id, config) {
+  if (!window.Chart) return;
+  Chart.defaults.color = css("--muted");
+  Chart.defaults.borderColor = css("--line");
+  Chart.defaults.font.family = css("--font-body");
+  if (charts[id]) { charts[id].data = config.data; charts[id].options = config.options; charts[id].update("none"); return; }
+  charts[id] = new Chart($(id), config);
+}
+
+function renderAreaChart() {
+  const keys = Object.keys(AREAS), is = SK.data.issues;
+  chart("c-areas", { type: "bar",
+    data: { labels: keys.map(k => AREAS[k]), datasets: [
+      { label: "erledigt", data: keys.map(k => is.filter(i => areaOfIssue(i) === k && i.state === "closed").length), backgroundColor: css("--done"), borderRadius: 4 },
+      { label: "offen", data: keys.map(k => is.filter(i => areaOfIssue(i) === k && i.state === "open").length), backgroundColor: keys.map(k => css(AREA_COLORS[k])), borderRadius: 4 },
+    ] },
+    options: { maintainAspectRatio: false, indexAxis: "y", plugins: { legend: { position: "bottom" } },
+      scales: { x: { stacked: true, ticks: { precision: 0 }, grid: { color: css("--line") } }, y: { stacked: true, grid: { display: false } } } } });
+}
+function renderPeopleChart() {
+  const since = Date.now() - 14 * 86400000, d = SK.data;
+  const ppl = d.people.map(p => p.login);
+  chart("c-people", { type: "bar",
+    data: { labels: ppl.map(firstName), datasets: [
+      { label: "Tagebuch-Einträge", data: ppl.map(l => d.diary.filter(c => c.user && c.user.login === l && Date.parse(c.created_at) >= since).length), backgroundColor: css("--accent"), borderRadius: 4 },
+      { label: "erledigte Aufgaben", data: ppl.map(l => d.issues.filter(i => i.state === "closed" && Date.parse(i.closed_at) >= since && d.closers[i.number] && d.closers[i.number].login === l).length), backgroundColor: css("--done"), borderRadius: 4 },
+    ] },
+    options: { maintainAspectRatio: false, plugins: { legend: { position: "bottom" } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: css("--line") } }, x: { grid: { display: false } } } } });
+}
+
+// ---------- Kosten ----------
+async function loadCosts() {
+  try {
+    const f = await api(R + "/contents/" + CFG.costFile, { allow404: true });
+    costSha = f.sha; costs = JSON.parse(b64dec(f.content));
+  } catch (e) {
+    if (e.status !== 404) throw e;
+    costSha = null; costs = JSON.parse(JSON.stringify(DEFAULT_COSTS));
+  }
+  dirty = false;
+}
+function costRow(list, idx) {
+  const it = list[idx];
+  const mark = () => { dirty = true; $("cost-dirty").textContent = "Nicht gespeichert"; renderCostSummary(); };
+  return h("tr", {},
+    h("td", {}, h("input", { type: "text", value: it.name, "aria-label": "Bezeichnung", oninput: (e) => { it.name = e.target.value; mark(); } })),
+    h("td", {}, h("input", { type: "text", value: it.art || "", "aria-label": "Art", oninput: (e) => { it.art = e.target.value; mark(); } })),
+    h("td", { class: "num" }, h("input", { type: "number", min: "0", step: "1", value: it.betrag == null ? "" : it.betrag, placeholder: "offen", "aria-label": "Betrag in Euro", style: "text-align:right",
+      oninput: (e) => { it.betrag = e.target.value === "" ? null : Number(e.target.value); mark(); } })),
+    h("td", {}, h("button", { class: "link", type: "button", "aria-label": "Zeile löschen", onclick: () => { list.splice(idx, 1); mark(); renderCostTables(); } }, "löschen")));
+}
+function renderCostTables() {
+  $("cost-rows").replaceChildren(...costs.kosten.map((_, i) => costRow(costs.kosten, i)));
+  $("income-rows").replaceChildren(...costs.einnahmen.map((_, i) => costRow(costs.einnahmen, i)));
+  renderCostSummary();
+}
+function renderCostSummary() {
+  const known = costs.kosten.filter(k => typeof k.betrag === "number" && k.betrag > 0);
+  const sum = known.reduce((s, k) => s + k.betrag, 0);
+  const open = costs.kosten.length - known.length;
+  const stat = (n, l) => h("div", { class: "stat" }, h("b", {}, n), h("span", { class: "muted small" }, l));
+  $("cost-stats").replaceChildren(stat(euro(sum), "bekannte Kosten"), stat(open, "Posten noch offen"), stat(costs.einnahmen.filter(e => typeof e.betrag === "number").length + "/" + costs.einnahmen.length, "Preise festgelegt"));
+  $("cost-empty").hidden = known.length > 0;
+  $("cost-chart").hidden = !known.length;
+  if (known.length) {
+    const pal = ["--p-blau", "--p-rot", "--p-gelb", "--done", "--accent", "--p-grau", "--p-schwarz", "--sos"].map(css);
+    chart("c-costs", { type: "doughnut",
+      data: { labels: known.map(k => k.name), datasets: [{ data: known.map(k => k.betrag), backgroundColor: known.map((_, i) => pal[i % pal.length]), borderColor: css("--surface"), borderWidth: 2 }] },
+      options: { maintainAspectRatio: false, plugins: { legend: { position: "bottom" }, tooltip: { callbacks: { label: (c) => c.label + ": " + euro(c.parsed) } } } } });
+  }
+  $("cost-info").textContent = costSha ? "" : "Noch nicht gespeichert";
+}
+$("add-cost").addEventListener("click", () => { costs.kosten.push({ name: "", art: "", betrag: null }); dirty = true; renderCostTables(); });
+$("add-income").addEventListener("click", () => { costs.einnahmen.push({ name: "", art: "", betrag: null }); dirty = true; renderCostTables(); });
+$("save-costs").addEventListener("click", () => act(async () => {
+  costs.kosten = costs.kosten.filter(k => k.name.trim()); costs.einnahmen = costs.einnahmen.filter(k => k.name.trim());
+  const body = { message: "Kosten aktualisiert (" + firstName(SK.me.login) + ")", content: b64enc(JSON.stringify(costs, null, 2) + "\n") };
+  if (costSha) body.sha = costSha;
+  try { const res = await api(R + "/contents/" + CFG.costFile, { method: "PUT", body }); costSha = res.content.sha; }
+  catch (e) { if (e.status === 409) { await loadCosts(); renderCostTables(); throw new Error("Jemand anderes hat gerade gespeichert. Die neuen Zahlen sind jetzt geladen, bitte deine Änderung nochmal eintragen."); } throw e; }
+  dirty = false; $("cost-dirty").textContent = ""; renderCostTables();
+}, "Kosten gespeichert."));
+window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+// ---------- Plan ----------
+let planLoaded = false;
+async function loadPlan() {
+  if (planLoaded) return;
+  $("plan-edit").href = `https://github.com/${CFG.owner}/${CFG.repo}/edit/main/${encodeURIComponent(CFG.planFile)}`;
+  const html = await api(R + "/contents/" + encodeURIComponent(CFG.planFile), { accept: "application/vnd.github.raw+json" });
+  const f = $("plan-frame");
+  f.onload = () => { try { f.style.height = (f.contentDocument.documentElement.scrollHeight + 24) + "px"; } catch {} };
+  f.srcdoc = html; planLoaded = true;
+}
+
+startPage("plan", ["tasks", "diary"], async () => {
+  renderAreaChart(); renderPeopleChart();
+  if (!costs || !dirty) { await loadCosts(); renderCostTables(); }
+  await loadPlan();
+});
+</script>
+</body>
+</html>
