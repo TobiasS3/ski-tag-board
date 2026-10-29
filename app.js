@@ -191,8 +191,11 @@ function newItems(base) {
     for (const c of q.comments.nodes) if (other(c.author, c.createdAt))
       out.push({ id: "c" + c.id, at: c.createdAt, who: c.author, kind: "Antwort", text: c.body, sub: "auf: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
   }
-  for (const i of SK.data.issues) if (i.state === "open" && other(i.user, i.created_at) && (isMine(i) || isFree(i)))
-    out.push({ id: "i" + i.number, at: i.created_at, who: i.user, kind: isMine(i) ? "Neue Aufgabe für dich" : "Neue Aufgabe", text: i.title, href: isMine(i) ? "./" : "zeitplan.html" });
+  // jede neue Aufgabe sehen alle; gelöschte sind in SK.data.issues nicht mehr drin und verschwinden damit auch hier
+  for (const i of SK.data.issues) if (i.state === "open" && other(i.user, i.created_at)) {
+    const kind = isMine(i) ? "Neue Aufgabe für dich" : isFree(i) ? "Neue Aufgabe, noch niemand zuständig" : "Neue Aufgabe für " + ownerName(i);
+    out.push({ id: "i" + i.number, at: i.created_at, who: i.user, kind, text: i.title, href: isMine(i) ? "./" : "zeitplan.html" });
+  }
   const read = readIds();
   return out.filter(x => !read.has(x.id)).sort((a, b) => b.at.localeCompare(a.at));
 }
@@ -429,9 +432,12 @@ function startPage(page, needs, render) {
   shell(page);
   SK.token = load(TOKEN_KEY);
   if (SK.token) boot(); else { $("main").hidden = true; $("login").hidden = false; }
-  // Alle 60 Sekunden neu laden, damit man Änderungen der anderen sieht
-  setInterval(() => {
+  // Alle 30 Sekunden neu laden und sofort, wenn man zum Tab zurückkommt, damit man Änderungen der anderen gleich sieht
+  const auto = () => {
     if (SK.token && SK.me && !busy && document.visibilityState === "visible" && !document.activeElement.matches("textarea, input[type=text], input[type=number], input[type=date], select"))
       refresh().catch(() => {});
-  }, 60000);
+  };
+  setInterval(auto, 30000);
+  document.addEventListener("visibilitychange", auto);
+  window.addEventListener("focus", auto);
 }
