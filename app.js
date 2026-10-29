@@ -171,12 +171,11 @@ const bodyWithoutRecipient = (b) => (b || "").replace(/^An:\s*(@[A-Za-z0-9-]+|al
 const openTasksOf = (login) => SK.data.issues.filter(i => i.state === "open" && (i.assignees || []).some(a => a.login === login));
 // geklärt = geschlossen (oder auf GitHub eine Antwort als Lösung markiert)
 const isSettled = (q) => q.closed || q.isAnswered;
-// Fragen, um die man sich kümmern sollte: offen an mich, oder seit dem letzten Besuch neu von anderen
+// Fragen mit Neuem von anderen seit dem letzten Besuch der Fragen-Seite
 function questionsToNotice() {
   const me = SK.me.login, base = seenOf("fragen");
   const byOther = (a, iso) => a && a.login !== me && newerThan(iso, base);
-  return SK.data.questions.filter(q => (!isSettled(q) && recipientOf(q) === me) ||
-    byOther(q.author, q.createdAt) || q.comments.nodes.some(c => byOther(c.author, c.createdAt)));
+  return SK.data.questions.filter(q => byOther(q.author, q.createdAt) || q.comments.nodes.some(c => byOther(c.author, c.createdAt)));
 }
 // Alles, was andere seit „base“ geschrieben haben – für die Seite „Neu“ und ihr Licht im Menü
 function newItems(base) {
@@ -377,8 +376,8 @@ function renderUserbox() {
     h("button", { class: "link", type: "button", onclick: () => act(SK.refresh, "Aktualisiert.") }, "Aktualisieren"),
     h("button", { class: "link", type: "button", onclick: () => logout() }, "Abmelden"));
   const badge = (id, n) => { const el = $(id); if (el) { el.textContent = n; el.hidden = !n; } };
-  badge("nav-fragen", questionsToNotice().length);
-  badge("nav-tagebuch", newDiaryCount());
+  badge("nav-fragen", SK.page === "fragen" ? 0 : questionsToNotice().length);
+  badge("nav-tagebuch", SK.page === "tagebuch" ? 0 : newDiaryCount());
   badge("nav-neu", newItems(seenOf("neu")).length);
 }
 function logout(msg) {
