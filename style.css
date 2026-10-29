@@ -177,3 +177,17 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .gantt { grid-template-columns: 150px 1fr; }
 }
 @media (prefers-reduced-motion: no-preference) { .g-bar, .item, .btn { transition: opacity .2s ease, background .2s ease; } }
+
+/* Fragen als aufklappbare Zeilen */
+.qrow { border-top: 1px solid var(--line); }
+.qrow:first-child { border-top: 0; }
+.qrow > summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center; padding: 10px 0; }
+.qrow > summary::-webkit-details-marker { display: none; }
+.qrow > summary .q-title { font-weight: 600; overflow-wrap: anywhere; }
+.qrow > summary .q-meta { font-size: 13px; color: var(--muted); }
+.qrow > summary .arrow { color: var(--muted); transition: transform .15s ease; }
+.qrow[open] > summary .arrow { transform: rotate(90deg); }
+.qrow .q-inner { display: grid; gap: 8px; padding: 0 0 14px 38px; }
+.qrow textarea { min-height: 44px; }
+.qrow.settled .q-title { color: var(--muted); font-weight: 500; }
+details.more > summary { cursor: pointer; color: var(--muted); font-size: 15px; }

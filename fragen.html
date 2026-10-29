@@ -15,89 +15,91 @@
   <main id="main" hidden>
     <section class="panel">
       <h2>Frage stellen</h2>
-      <form class="add" id="f-q">
-        <input type="text" id="q-title" placeholder="z. B. Kann die App „SOS ist angekommen“ anzeigen?" required aria-label="Frage">
-        <textarea id="q-body" placeholder="Mehr Details (optional)" aria-label="Details"></textarea>
-        <div class="row">
-          <label class="f">An wen<select id="q-to"></select></label>
-          <label class="f">Bereich<select id="q-area"></select></label>
-          <button class="btn" type="submit" style="align-self:end">Fragen</button>
-        </div>
-        <p class="muted small" style="margin:0">Wer gefragt wird, sieht die Frage auf seiner Startseite und bekommt eine Mail von GitHub.</p>
+      <form class="row" id="f-q">
+        <input type="text" id="q-title" class="grow" style="flex:3 1 260px" placeholder="Deine Frage, z. B. „Geht in der App eine SOS-Bestätigung?“" required aria-label="Frage">
+        <select id="q-to" class="grow" aria-label="An wen"></select>
+        <button class="btn" type="submit">Fragen</button>
       </form>
     </section>
 
     <section class="panel">
-      <div class="panel-head"><h2>Fragen</h2>
-        <div class="seg" role="group" aria-label="Filter">
-          <button type="button" data-f="open" aria-pressed="true">offen</button>
-          <button type="button" data-f="all" aria-pressed="false">alle</button>
-        </div>
-      </div>
-      <div id="q-list"></div>
+      <h2>An dich</h2>
+      <div id="to-me"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Andere offene Fragen</h2>
+      <div id="others"></div>
+      <details class="more" id="settled-box" hidden>
+        <summary id="settled-sum">Geklärte Fragen</summary>
+        <div id="settled"></div>
+      </details>
     </section>
   </main>
 </div>
 <script src="app.js"></script>
 <script>
-let filter = "open";
-const drafts = {};
+const drafts = {}, opened = new Set();
 
-function renderQuestions() {
-  const me = SK.me.login;
-  if (!SK.data.qa) return $("q-list").replaceChildren(h("p", { class: "empty" }, "Im Repo fehlt der Q&A-Bereich der Discussions."));
-  let qs = SK.data.questions;
-  if (filter === "open") qs = qs.filter(q => !isSettled(q));
-  qs = [...qs].sort((a, b) => isSettled(a) - isSettled(b) || b.createdAt.localeCompare(a.createdAt));
-  if (!qs.length) return $("q-list").replaceChildren(h("p", { class: "empty" }, filter === "open" ? "Keine offenen Fragen." : "Noch keine Fragen."));
-  // angefangene Antworten behalten
-  document.querySelectorAll("#q-list textarea").forEach(t => drafts[t.id] = t.value);
-  $("q-list").replaceChildren(...qs.map(q => {
-    const to = recipientOf(q), area = areaOfQuestion(q), body = bodyWithoutRecipient(q.body), settled = isSettled(q);
-    const meta = h("span", { class: "muted" }, firstName(q.author && q.author.login) + " → " + (to ? firstName(to) : "alle") + " · " + ago(q.createdAt));
-    // geklärte Fragen nur als kurze Zeile
-    if (settled) return h("div", { class: "q", id: "q" + q.number },
-      h("div", { class: "row small" }, h("span", { class: "pill done" }, "geklärt"), area ? chip(area) : null, meta,
-        h("button", { class: "link", type: "button", onclick: () => act(async () => { await settleQuestion(q, false); await SK.refresh(); }, "Wieder offen.") }, "wieder öffnen")),
-      h("div", { class: "title muted" }, cleanTitle(q.title)));
+function questionRow(q) {
+  const me = SK.me.login, to = recipientOf(q), settled = isSettled(q), body = bodyWithoutRecipient(q.body);
+  const answers = q.comments.nodes, fresh = isNew(q.createdAt) || answers.some(c => isNew(c.createdAt));
+  const row = h("details", { class: "qrow" + (settled ? " settled" : ""), id: "q" + q.number, open: opened.has(q.number) || null,
+    ontoggle: (e) => e.target.open ? opened.add(q.number) : opened.delete(q.number) },
+    h("summary", {}, av(q.author),
+      h("div", {}, h("div", { class: "q-title" }, cleanTitle(q.title)),
+        h("div", { class: "q-meta" }, firstName(q.author && q.author.login) + " → " + (to ? (to === me ? "dich" : firstName(to)) : "alle") + " · " + ago(q.createdAt) +
+          " · " + (answers.length === 1 ? "1 Antwort" : answers.length + " Antworten"),
+          fresh && !settled ? h("span", { class: "pill new", style: "margin-left:8px" }, "neu") : null)),
+      h("span", { class: "arrow", "aria-hidden": "true" }, "›")));
+  const inner = h("div", { class: "q-inner" });
+  if (body && body !== "(keine Details)") inner.append(h("div", { class: "body muted" }, body));
+  for (const c of answers) inner.append(h("div", { class: "cmt" }, av(c.author), h("div", {},
+    h("div", { class: "row small" }, h("b", {}, firstName(c.author && c.author.login)), h("span", { class: "muted" }, ago(c.createdAt))),
+    h("p", {}, c.body))));
+  if (settled) {
+    inner.append(h("div", {}, h("button", { class: "link", type: "button", onclick: () => act(async () => { await settleQuestion(q, false); await SK.refresh(); }, "Wieder offen.") }, "wieder öffnen")));
+  } else {
     const ta = h("textarea", { id: "a-" + q.number, placeholder: "Antwort schreiben …", "aria-label": "Antwort" });
     ta.value = drafts[ta.id] || "";
-    return h("div", { class: "q" + (isNew(q.createdAt) ? " is-new" : ""), id: "q" + q.number },
-      h("div", { class: "row small" },
-        h("span", { class: "pill open" }, "offen"), area ? chip(area) : null, meta,
-        to === me ? h("span", { class: "pill new" }, "an dich") : null),
-      h("div", { class: "title" }, cleanTitle(q.title)),
-      body && body !== "(keine Details)" ? h("div", { class: "body" }, body) : null,
-      ...q.comments.nodes.map(c => h("div", { class: "cmt" }, av(c.author), h("div", {},
-        h("div", { class: "row small" }, h("b", {}, nameOf(c.author && c.author.login)), h("span", { class: "muted" }, ago(c.createdAt)),
-          isNew(c.createdAt) ? h("span", { class: "pill new" }, "neu") : null),
-        h("p", {}, c.body)))),
-      h("form", { class: "add", onsubmit: (ev) => {
-        ev.preventDefault(); const text = ta.value.trim(); if (!text) return;
-        act(async () => { await answerQuestion(q, text); delete drafts[ta.id]; ta.value = ""; await SK.refresh(); }, "Antwort gespeichert.");
-      } }, ta, h("div", { class: "row" },
-        h("button", { class: "btn", type: "submit" }, "Antworten"),
-        h("button", { class: "btn ghost", type: "button", onclick: () => act(async () => { await settleQuestion(q, true); delete drafts[ta.id]; await SK.refresh(); }, "Als geklärt markiert.") }, "✓ Geklärt"))));
-  }));
-  if (location.hash && !renderQuestions.jumped) { const el = document.querySelector(location.hash); if (el) { el.scrollIntoView(); renderQuestions.jumped = true; } }
+    inner.append(h("form", { class: "add", onsubmit: (ev) => {
+      ev.preventDefault(); const text = ta.value.trim(); if (!text) return;
+      act(async () => { await answerQuestion(q, text); delete drafts[ta.id]; await SK.refresh(); }, "Antwort gespeichert.");
+    } }, ta, h("div", { class: "row" },
+      h("button", { class: "btn", type: "submit" }, "Antworten"),
+      h("button", { class: "btn ghost", type: "button", onclick: () => act(async () => { await settleQuestion(q, true); delete drafts[ta.id]; opened.delete(q.number); await SK.refresh(); }, "Als geklärt markiert.") }, "✓ Geklärt"))));
+  }
+  row.append(inner);
+  return row;
 }
 
-areaOptions($("q-area")); $("q-area").value = "app";
+function render() {
+  const me = SK.me.login;
+  document.querySelectorAll("main textarea").forEach(t => drafts[t.id] = t.value);
+  if (!SK.data.qa) return $("others").replaceChildren(h("p", { class: "empty" }, "Im Repo fehlt der Q&A-Bereich der Discussions."));
+  const byNew = (a, b) => b.createdAt.localeCompare(a.createdAt);
+  const open = SK.data.questions.filter(q => !isSettled(q)).sort(byNew);
+  const mine = open.filter(q => recipientOf(q) === me), rest = open.filter(q => recipientOf(q) !== me);
+  const settled = SK.data.questions.filter(isSettled).sort(byNew);
+  $("to-me").replaceChildren(...(mine.length ? mine.map(questionRow) : [h("p", { class: "empty" }, "Niemand hat dich gerade etwas gefragt.")]));
+  $("others").replaceChildren(...(rest.length ? rest.map(questionRow) : [h("p", { class: "empty" }, "Keine anderen offenen Fragen.")]));
+  $("settled-box").hidden = !settled.length;
+  $("settled-sum").textContent = "Geklärte Fragen (" + settled.length + ")";
+  $("settled").replaceChildren(...settled.map(questionRow));
+  if (location.hash && !render.jumped) {
+    const el = document.querySelector(location.hash);
+    if (el) { el.open = true; opened.add(Number(location.hash.slice(2))); if (el.closest("#settled")) $("settled-box").open = true; el.scrollIntoView(); render.jumped = true; }
+  }
+}
+
 $("f-q").addEventListener("submit", (ev) => {
   ev.preventDefault(); const t = $("q-title").value.trim(); if (!t) return;
-  act(async () => {
-    await askQuestion($("q-area").value, $("q-to").value, t, $("q-body").value.trim());
-    $("q-title").value = ""; $("q-body").value = ""; await SK.refresh();
-  }, "Frage gestellt.");
+  act(async () => { await askQuestion(null, $("q-to").value, t, ""); $("q-title").value = ""; await SK.refresh(); }, "Frage gestellt.");
 });
-document.querySelectorAll("[data-f]").forEach(b => b.addEventListener("click", () => {
-  filter = b.dataset.f; document.querySelectorAll("[data-f]").forEach(x => x.setAttribute("aria-pressed", x === b)); renderQuestions();
-}));
-if (location.hash) { filter = "all"; document.querySelectorAll("[data-f]").forEach(x => x.setAttribute("aria-pressed", x.dataset.f === "all")); }
 
 startPage("fragen", [], async () => {
   peopleOptions($("q-to"), "An alle");
-  renderQuestions();
+  render();
 });
 </script>
 </body>

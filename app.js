@@ -211,7 +211,7 @@ async function postDiary(area, text) {
 async function askQuestion(area, to, title, details) {
   const head = to ? "An: @" + to : "An: alle";
   await gql(`mutation($r:ID!,$c:ID!,$t:String!,$b:String!){createDiscussion(input:{repositoryId:$r,categoryId:$c,title:$t,body:$b}){discussion{id}}}`,
-    { r: SK.data.repoId, c: SK.data.qa.id, t: "[" + AREAS[area] + "] " + title, b: head + "\n\n" + (details || "") });
+    { r: SK.data.repoId, c: SK.data.qa.id, t: (area ? "[" + AREAS[area] + "] " : "") + title, b: head + "\n\n" + (details || "") });
 }
 async function answerQuestion(q, text) {
   await gql(`mutation($d:ID!,$b:String!){addDiscussionComment(input:{discussionId:$d,body:$b}){clientMutationId}}`, { d: q.id, b: text });

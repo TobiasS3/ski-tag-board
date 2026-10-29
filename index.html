@@ -45,12 +45,13 @@
 </div>
 <script src="app.js"></script>
 <script>
-let diaryFilter = "new";
+let diaryFilter = "new", editId = null, editDraft = null;
 
 function renderMine() {
   const me = SK.me.login;
   const qs = openQuestionsFor(me), ts = openTasksOf(me), answers = newAnswersFor(me);
-  const n = [ts.length && ts.length + " Aufgaben", qs.length && qs.length + " Fragen", answers.length && answers.length + " Antworten"].filter(Boolean);
+  const word = (n, one, many) => n && n + " " + (n === 1 ? one : many);
+  const n = [word(ts.length, "Aufgabe", "Aufgaben"), word(qs.length, "Frage", "Fragen"), word(answers.length, "Antwort", "Antworten")].filter(Boolean);
   $("mine-count").textContent = n.join(" · ");
   const parts = [];
   if (answers.length) parts.push(h("h3", {}, "Neue Antworten auf deine Fragen"), ...answers.map(q => {
@@ -70,7 +71,8 @@ function renderMine() {
 
 function renderDiary() {
   const since = Date.now() - 14 * 86400000;
-  const list = SK.data.diary.filter(c => diaryFilter === "new" ? isNew(c.created_at) : Date.parse(c.created_at) >= since);
+  const mineToday = (c) => c.user && c.user.login === SK.me.login && dayKey(c.created_at) === ymd(new Date());
+  const list = SK.data.diary.filter(c => diaryFilter === "new" ? isNew(c.created_at) || mineToday(c) : Date.parse(c.created_at) >= since);
   if (!list.length) {
     const msg = diaryFilter === "new"
       ? (SK.prevSeen ? "Nichts Neues seit deinem letzten Besuch." : "Das ist dein erster Besuch. Unter „letzte 14 Tage“ siehst du, was bisher geschrieben wurde.")
@@ -81,9 +83,25 @@ function renderDiary() {
   for (const c of list) { const k = dayKey(c.created_at); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(c); }
   $("diary").replaceChildren(...[...byDay].flatMap(([k, cs]) => [h("div", { class: "day-h" }, dayLabel(k)), ...cs.map(c => {
     const e = parseEntry(c.body);
-    return h("div", { class: "item" }, av(c.user), h("div", {},
-      h("div", { class: "top" }, h("b", {}, nameOf(c.user && c.user.login)), e.area ? chip(e.area) : null, h("span", {}, timeOf(c.created_at))),
-      h("p", {}, e.text)));
+    // eigene Einträge von heute darf man noch ändern
+    const editable = c.user && c.user.login === SK.me.login && dayKey(c.created_at) === ymd(new Date());
+    const top = h("div", { class: "top" }, h("b", {}, nameOf(c.user && c.user.login)), e.area ? chip(e.area) : null, h("span", {}, timeOf(c.created_at)),
+      editable && editId !== c.id ? h("button", { class: "link", type: "button", onclick: () => { editId = c.id; editDraft = null; renderDiary(); } }, "bearbeiten") : null);
+    if (editId !== c.id) return h("div", { class: "item" }, av(c.user), h("div", {}, top, h("p", {}, e.text)));
+    const ta = h("textarea", { id: "edit-text", "aria-label": "Eintrag bearbeiten" }); ta.value = editDraft ? editDraft.text : e.text;
+    const sel = h("select", { id: "edit-area", class: "grow", "aria-label": "Bereich" }); areaOptions(sel); sel.value = editDraft ? editDraft.area : (e.area || "plan");
+    const keep = () => { editDraft = { text: ta.value, area: sel.value }; };
+    ta.addEventListener("input", keep); sel.addEventListener("change", keep);
+    return h("div", { class: "item" }, av(c.user), h("div", {}, top,
+      h("form", { class: "add", style: "margin-top:6px", onsubmit: (ev) => {
+        ev.preventDefault(); const text = ta.value.trim(); if (!text) return;
+        act(async () => {
+          await api(R + "/issues/comments/" + c.id, { method: "PATCH", body: { body: "**" + AREAS[sel.value] + ":** " + text } });
+          editId = null; editDraft = null; await SK.refresh();
+        }, "Eintrag geändert.");
+      } }, ta, h("div", { class: "row" }, sel,
+        h("button", { class: "btn", type: "submit" }, "Speichern"),
+        h("button", { class: "btn ghost", type: "button", onclick: () => { editId = null; editDraft = null; renderDiary(); } }, "Abbrechen")))));
   })]));
 }
 
