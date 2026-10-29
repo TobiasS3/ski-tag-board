@@ -31,6 +31,7 @@
         <div class="row">
           <button class="btn" type="submit">Speichern</button>
           <button class="btn ghost" type="button" id="ed-cancel">Abbrechen</button>
+          <span id="ed-extra"></span>
           <span class="muted small">Ohne Datum gilt die ganze Phase.</span>
         </div>
       </form>
@@ -135,6 +136,8 @@ function openEditor(i) {
   $("ed-end").value = r ? r[2] : "";
   $("ed-state").value = i ? i.state : "open";
   $("ed-note").value = i ? (i.body || "").replace(RANGE_RE, "").trim() : "";
+  // bei eigenen Aufgaben: abgeben / löschen wie unter „Meine Aufgaben“
+  $("ed-extra").replaceChildren(i && isMine(i) ? taskActions(i) : "");
   $("editor").hidden = false;
   $("editor").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
   $("ed-title").focus({ preventScroll: true });
@@ -183,6 +186,7 @@ $("ed-cancel").addEventListener("click", () => { $("editor").hidden = true; edit
 $("new-task").addEventListener("click", () => openEditor(null));
 
 startPage("zeitplan", ["tasks"], async () => {
+  if (editing) { const now = SK.data.issues.find(x => x.number === editing.number); if (!now || !isMine(now)) { $("editor").hidden = true; editing = null; } }
   renderGantt();
   if (!$("editor").hidden) { const keep = { area: $("ed-area").value, who: $("ed-who").value, month: $("ed-month").value }; fillEditorSelects(); $("ed-area").value = keep.area; $("ed-who").value = keep.who; $("ed-month").value = keep.month; }
 });

@@ -201,3 +201,11 @@ details.more > summary { cursor: pointer; color: var(--muted); font-size: 15px; 
   width: max-content; max-width: calc(100% - 32px); display: flex; align-items: center; gap: 12px;
   background: var(--surface); color: var(--ink); border-style: solid; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
 #status .undo { padding: 4px 12px; }
+
+.task-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 12px; align-items: baseline; max-width: 180px; }
+.link.danger { color: var(--sos); font-weight: 600; }
+
+.item .top .del { margin-left: auto; display: inline-flex; gap: 10px; align-items: baseline; }
+.x { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 6px; width: 26px; height: 26px; line-height: 1; font-size: 18px; cursor: pointer; padding: 0; }
+.x:hover { color: var(--sos); border-color: var(--sos); }
+.item .top { width: 100%; }

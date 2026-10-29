@@ -280,6 +280,25 @@ function tickBox(i) {
     onchange: (ev) => { const on = ev.target.checked; act(async () => { await setTaskState(i, on); await SK.refresh(); return () => setTaskState(i, !on); }, on ? "Abgehakt." : "Wieder offen."); } });
   return h("input", { type: "checkbox", checked: i.state === "closed", disabled: true, "aria-label": "Erledigt: " + i.title, title: isFree(i) ? "Erst übernehmen" : "Nur " + ownerName(i) + " kann das abhaken" });
 }
+// Eigene Aufgaben: abgeben oder löschen (mit Rückfrage). Beides lässt sich danach rückgängig machen.
+function taskActions(i) {
+  const box = h("div", { class: "task-actions" });
+  if (!isMine(i)) return box;
+  const was = i.state;
+  const normal = () => box.replaceChildren(
+    i.state === "open" ? h("button", { class: "link", type: "button", onclick: () => act(async () => {
+      await giveBack(i); await SK.refresh(); return () => takeOver(i);
+    }, "Abgegeben. Jetzt kann sie jemand anders übernehmen.") }, "Abgeben") : "",
+    h("button", { class: "link", type: "button", onclick: ask }, "Löschen"));
+  const ask = () => box.replaceChildren(h("span", { class: "small" }, "Wirklich löschen?"),
+    h("button", { class: "link danger", type: "button", onclick: () => act(async () => {
+      await dropTask(i.number); await SK.refresh();
+      return () => api(R + "/issues/" + i.number, { method: "PATCH", body: was === "open" ? { state: "open" } : { state: "closed", state_reason: "completed" } });
+    }, "Gelöscht.") }, "Ja"),
+    h("button", { class: "link", type: "button", onclick: normal }, "Nein"));
+  normal();
+  return box;
+}
 function taskRow(i, onOpen) {
   const closer = SK.data.closers[i.number], r = taskRange(i);
   return h("div", { class: "task" + (i.state === "closed" ? " done" : "") },
@@ -292,7 +311,7 @@ function taskRow(i, onOpen) {
         r ? h("span", {}, r.start.toLocaleDateString("de-AT", { day: "numeric", month: "short" }) + " – " + r.end.toLocaleDateString("de-AT", { day: "numeric", month: "short" })) : null,
         i.state === "closed" ? h("span", {}, "erledigt" + (closer ? " von " + firstName(closer.login) : "") + " am " + dateOf(i.closed_at)) : null,
         isFree(i) && i.state === "open" ? h("button", { class: "link", type: "button", onclick: () => act(async () => { await takeOver(i); await SK.refresh(); return () => giveBack(i); }, "Übernommen.") }, "Übernehmen") : null)),
-    h("span"));
+    taskActions(i));
 }
 
 // ---------- Rahmen: Kopf, Menü, Anmeldung ----------
