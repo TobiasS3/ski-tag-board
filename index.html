@@ -13,110 +13,72 @@
 <body>
 <div class="wrap" id="wrap">
   <main id="main" hidden>
-    <div class="grid2">
-      <section class="panel">
-        <h2>Was hast du heute gemacht?</h2>
-        <form class="add" id="f-log">
-          <textarea id="log-text" placeholder="z. B. Kapitel Akku im Hardware-Buch geschrieben" required aria-label="Was hast du heute gemacht"></textarea>
-          <div class="row">
-            <select id="log-area" class="grow" aria-label="Bereich"></select>
-            <button class="btn" type="submit">Eintragen</button>
-          </div>
-        </form>
-      </section>
-
-      <section class="panel">
-        <div class="panel-head"><h2>Für dich</h2><span class="muted small" id="mine-count"></span></div>
-        <div id="mine"></div>
-      </section>
-    </div>
+    <section class="panel">
+      <h2>Neue Aufgabe</h2>
+      <form class="row" id="f-task">
+        <input type="text" id="t-title" class="grow" style="flex:3 1 240px" placeholder="Was ist zu tun?" required aria-label="Aufgabe">
+        <select id="t-who" class="grow" aria-label="Wer"></select>
+        <select id="t-phase" class="grow" aria-label="Phase"></select>
+        <button class="btn" type="submit">Hinzufügen</button>
+      </form>
+    </section>
 
     <section class="panel">
-      <div class="panel-head">
-        <h2>Tagebuch</h2>
-        <div class="seg" role="group" aria-label="Filter">
-          <button type="button" data-f="new" aria-pressed="true">nur neue</button>
-          <button type="button" data-f="14" aria-pressed="false">letzte 14 Tage</button>
-        </div>
-      </div>
-      <div class="list" id="diary"></div>
+      <div class="panel-head"><h2>Deine Aufgaben</h2><span class="muted small" id="mine-count"></span></div>
+      <div id="mine"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Aufgaben der anderen</h2>
+      <div id="others"></div>
+      <details class="more" id="done-box" hidden>
+        <summary id="done-sum">Erledigt</summary>
+        <div id="done"></div>
+      </details>
     </section>
   </main>
 </div>
 <script src="app.js"></script>
 <script>
-let diaryFilter = "new", editId = null, editDraft = null;
+const byEnd = (a, b) => ((taskRange(a) || {}).end || 9e15) - ((taskRange(b) || {}).end || 9e15);
 
-function renderMine() {
-  const me = SK.me.login;
-  const qs = openQuestionsFor(me), ts = openTasksOf(me), answers = newAnswersFor(me);
-  const word = (n, one, many) => n && n + " " + (n === 1 ? one : many);
-  const n = [word(ts.length, "Aufgabe", "Aufgaben"), word(qs.length, "Frage", "Fragen"), word(answers.length, "Antwort", "Antworten")].filter(Boolean);
-  $("mine-count").textContent = n.join(" · ");
+function render() {
+  const me = SK.me.login, is = SK.data.issues;
+  const open = is.filter(i => i.state === "open"), done = is.filter(i => i.state === "closed");
+  const mine = open.filter(isMine).sort(byEnd);
+  $("mine-count").textContent = mine.length ? mine.length + " offen" : "";
+  $("mine").replaceChildren(...(mine.length ? mine.map(i => taskRow(i)) : [h("p", { class: "empty" }, "Du hast gerade keine offenen Aufgaben.")]));
+
   const parts = [];
-  if (answers.length) parts.push(h("h3", {}, "Neue Antworten auf deine Fragen"), ...answers.map(q => {
-    const c = [...q.comments.nodes].reverse().find(c => c.author && c.author.login !== me && isNew(c.createdAt));
-    return h("div", { class: "item is-new" }, av(c.author),
-      h("div", {}, h("div", { class: "top" }, h("b", {}, firstName(c.author.login)), h("span", {}, ago(c.createdAt))),
-        h("p", {}, h("a", { href: "fragen.html#q" + q.number }, cleanTitle(q.title)))));
-  }));
-  if (qs.length) parts.push(h("h3", {}, "Fragen an dich"), ...qs.map(q => h("div", { class: "item" + (isNew(q.createdAt) ? " is-new" : "") }, av(q.author),
-    h("div", {}, h("div", { class: "top" }, h("b", {}, firstName(q.author && q.author.login)), h("span", {}, ago(q.createdAt))),
-      h("p", {}, h("a", { href: "fragen.html#q" + q.number }, cleanTitle(q.title)))))));
-  if (ts.length) parts.push(h("h3", {}, "Deine Aufgaben"), h("div", {}, ...ts
-    .sort((a, b) => ((taskRange(a) || {}).end || 9e15) - ((taskRange(b) || {}).end || 9e15)).map(i => taskRow(i))));
-  if (!parts.length) parts.push(h("p", { class: "empty" }, "Gerade ist nichts für dich offen."));
-  $("mine").replaceChildren(...parts);
-}
-
-function renderDiary() {
-  const since = Date.now() - 14 * 86400000;
-  const mineToday = (c) => c.user && c.user.login === SK.me.login && dayKey(c.created_at) === ymd(new Date());
-  const list = SK.data.diary.filter(c => diaryFilter === "new" ? isNew(c.created_at) || mineToday(c) : Date.parse(c.created_at) >= since);
-  if (!list.length) {
-    const msg = diaryFilter === "new"
-      ? (SK.prevSeen ? "Nichts Neues seit deinem letzten Besuch." : "Das ist dein erster Besuch. Unter „letzte 14 Tage“ siehst du, was bisher geschrieben wurde.")
-      : "Noch keine Einträge. Schreib oben rein, woran du heute gearbeitet hast.";
-    return $("diary").replaceChildren(h("p", { class: "empty" }, msg));
+  for (const p of SK.data.people.filter(p => p.login !== me)) {
+    const list = open.filter(i => (i.assignees || []).some(a => a.login === p.login)).sort(byEnd);
+    if (list.length) parts.push(h("h3", {}, nameOf(p.login)), h("div", {}, ...list.map(i => taskRow(i))));
   }
-  const byDay = new Map();
-  for (const c of list) { const k = dayKey(c.created_at); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(c); }
-  $("diary").replaceChildren(...[...byDay].flatMap(([k, cs]) => [h("div", { class: "day-h" }, dayLabel(k)), ...cs.map(c => {
-    const e = parseEntry(c.body);
-    // eigene Einträge von heute darf man noch ändern
-    const editable = c.user && c.user.login === SK.me.login && dayKey(c.created_at) === ymd(new Date());
-    const top = h("div", { class: "top" }, h("b", {}, nameOf(c.user && c.user.login)), e.area ? chip(e.area) : null, h("span", {}, timeOf(c.created_at)),
-      editable && editId !== c.id ? h("button", { class: "link", type: "button", onclick: () => { editId = c.id; editDraft = null; renderDiary(); } }, "bearbeiten") : null);
-    if (editId !== c.id) return h("div", { class: "item" }, av(c.user), h("div", {}, top, h("p", {}, e.text)));
-    const ta = h("textarea", { id: "edit-text", "aria-label": "Eintrag bearbeiten" }); ta.value = editDraft ? editDraft.text : e.text;
-    const sel = h("select", { id: "edit-area", class: "grow", "aria-label": "Bereich" }); areaOptions(sel); sel.value = editDraft ? editDraft.area : (e.area || "plan");
-    const keep = () => { editDraft = { text: ta.value, area: sel.value }; };
-    ta.addEventListener("input", keep); sel.addEventListener("change", keep);
-    return h("div", { class: "item" }, av(c.user), h("div", {}, top,
-      h("form", { class: "add", style: "margin-top:6px", onsubmit: (ev) => {
-        ev.preventDefault(); const text = ta.value.trim(); if (!text) return;
-        act(async () => {
-          await api(R + "/issues/comments/" + c.id, { method: "PATCH", body: { body: "**" + AREAS[sel.value] + ":** " + text } });
-          editId = null; editDraft = null; await SK.refresh();
-        }, "Eintrag geändert.");
-      } }, ta, h("div", { class: "row" }, sel,
-        h("button", { class: "btn", type: "submit" }, "Speichern"),
-        h("button", { class: "btn ghost", type: "button", onclick: () => { editId = null; editDraft = null; renderDiary(); } }, "Abbrechen")))));
-  })]));
+  const free = open.filter(isFree).sort(byEnd);
+  if (free.length) parts.push(h("h3", {}, "Noch niemand zuständig"), h("div", {}, ...free.map(i => taskRow(i))));
+  $("others").replaceChildren(...(parts.length ? parts : [h("p", { class: "empty" }, "Keine offenen Aufgaben bei den anderen.")]));
+
+  $("done-box").hidden = !done.length;
+  $("done-sum").textContent = "Erledigt (" + done.length + ")";
+  $("done").replaceChildren(...done.sort((a, b) => String(b.closed_at).localeCompare(String(a.closed_at))).map(i => taskRow(i)));
+
+  peopleOptions($("t-who"), "Niemand");
+  if (!$("t-who").dataset.init) { $("t-who").value = me; $("t-who").dataset.init = "1"; }
+  const ph = $("t-phase"), keep = ph.value;
+  ph.replaceChildren(...SK.data.milestones.map(m => h("option", { value: m.number }, m.title)));
+  if (keep) ph.value = keep;
 }
 
-areaOptions($("log-area"));
-$("f-log").addEventListener("submit", (ev) => {
-  ev.preventDefault(); const text = $("log-text").value.trim(); if (!text) return;
-  act(async () => { await postDiary($("log-area").value, text); $("log-text").value = ""; await SK.refresh(); }, "Eingetragen.");
+$("f-task").addEventListener("submit", (ev) => {
+  ev.preventDefault(); const title = $("t-title").value.trim(); if (!title) return;
+  const who = $("t-who").value;
+  const body = { title, labels: [CFG.areaOf[who] || "plan"] };
+  if ($("t-phase").value) body.milestone = Number($("t-phase").value);
+  if (who) body.assignees = [who];
+  act(async () => { await api(R + "/issues", { method: "POST", body }); $("t-title").value = ""; await SK.refresh(); }, "Aufgabe angelegt.");
 });
-document.querySelectorAll("[data-f]").forEach(b => b.addEventListener("click", () => {
-  diaryFilter = b.dataset.f; document.querySelectorAll("[data-f]").forEach(x => x.setAttribute("aria-pressed", x === b)); renderDiary();
-}));
 
-startPage("start", ["tasks", "diary"], async () => {
-  renderMine(); renderDiary();
-});
+startPage("aufgaben", ["tasks"], render);
 </script>
 </body>
 </html>

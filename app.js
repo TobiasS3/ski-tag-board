@@ -8,6 +8,8 @@ const CFG = {
   costFile: "daten/kosten.json",
   testDay: new Date(2027, 1, 1),
   range: [new Date(2026, 9, 26), new Date(2028, 2, 1)],
+  // Bereich, der bei neuen Aufgaben automatisch gesetzt wird
+  areaOf: { "Ma-xi": "hardware", Lukcoderc: "netzwerk", TobiasS3: "wirtschaft" },
 };
 const AREAS = { hardware: "Hardware", netzwerk: "Netzwerk", wirtschaft: "Wirtschaft & Verkauf", app: "App", plan: "Plan" };
 const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen";
@@ -61,6 +63,9 @@ const firstName = (login) => nameOf(login).split(" ")[0];
 function store(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} }
 function load(k) { try { return localStorage.getItem(k); } catch { return null; } }
 const isNew = (iso) => !!SK.prevSeen && Date.parse(iso) > SK.prevSeen;
+// Wann hat man eine Seite zuletzt angeschaut? Für die aktuelle Seite der Stand vom Sitzungsbeginn.
+const seenOf = (page) => page === SK.page ? SK.prevSeen : Number(load(SEEN_KEY + "-" + page) || 0);
+const newerThan = (iso, base) => !!base && Date.parse(iso) > base;
 
 function status(text, isErr) {
   const s = $("status"); if (!s) return;
@@ -126,7 +131,7 @@ async function loadTasks() {
   }));
 }
 async function loadDiary() {
-  SK.data.diary = (await all(R + "/issues/" + CFG.diary + "/comments")).reverse();
+  SK.data.diary = (await all(R + "/issues/" + CFG.diary + "/comments")).sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 async function loadQuestions() {
   const res = await gql(`query($o:String!,$r:String!){repository(owner:$o,name:$r){id
@@ -162,8 +167,14 @@ const bodyWithoutRecipient = (b) => (b || "").replace(/^An:\s*(@[A-Za-z0-9-]+|al
 const openTasksOf = (login) => SK.data.issues.filter(i => i.state === "open" && (i.assignees || []).some(a => a.login === login));
 // geklärt = geschlossen (oder auf GitHub eine Antwort als Lösung markiert)
 const isSettled = (q) => q.closed || q.isAnswered;
-const newAnswersFor = (login) => SK.data.questions.filter(q => q.author && q.author.login === login &&
-  q.comments.nodes.some(c => c.author && c.author.login !== login && isNew(c.createdAt)));
+// Fragen, um die man sich kümmern sollte: offen an mich, oder seit dem letzten Besuch neu von anderen
+function questionsToNotice() {
+  const me = SK.me.login, base = seenOf("fragen");
+  const byOther = (a, iso) => a && a.login !== me && newerThan(iso, base);
+  return SK.data.questions.filter(q => (!isSettled(q) && recipientOf(q) === me) ||
+    byOther(q.author, q.createdAt) || q.comments.nodes.some(c => byOther(c.author, c.createdAt)));
+}
+const newDiaryCount = () => SK.data.diary.filter(c => c.user && c.user.login !== SK.me.login && newerThan(c.created_at, seenOf("tagebuch"))).length;
 const openQuestionsFor = (login) => SK.data.questions.filter(q => !isSettled(q) && recipientOf(q) === login);
 
 // Zeitraum einer Aufgabe: „Zeitraum: 2026-11-03 – 2026-11-20“ im Text, sonst der Monat des Milestones
@@ -259,7 +270,7 @@ function taskRow(i, onOpen) {
     h("div", {},
       h("span", { class: "t", role: onOpen ? "button" : null, tabindex: onOpen ? "0" : null, onclick: onOpen ? () => onOpen(i) : null,
         onkeydown: onOpen ? (e) => { if (e.key === "Enter") onOpen(i); } : null }, i.title),
-      h("div", { class: "sub" }, chip(areaOfIssue(i)),
+      h("div", { class: "sub" }, isNew(i.created_at) && i.user && i.user.login !== SK.me.login ? h("span", { class: "pill new" }, "neu") : null, chip(areaOfIssue(i)),
         (i.assignees || []).length ? h("span", { class: "who" }, ...i.assignees.map(a => h("img", { src: a.avatar_url, alt: nameOf(a.login), title: nameOf(a.login) }))) : h("span", {}, "niemand zuständig"),
         r ? h("span", {}, r.start.toLocaleDateString("de-AT", { day: "numeric", month: "short" }) + " – " + r.end.toLocaleDateString("de-AT", { day: "numeric", month: "short" })) : null,
         i.state === "closed" ? h("span", {}, "erledigt" + (closer ? " von " + firstName(closer.login) : "") + " am " + dateOf(i.closed_at)) : null,
@@ -268,7 +279,7 @@ function taskRow(i, onOpen) {
 }
 
 // ---------- Rahmen: Kopf, Menü, Anmeldung ----------
-const PAGES = [["./", "start", "Start"], ["zeitplan.html", "zeitplan", "Zeitplan"], ["fragen.html", "fragen", "Fragen"], ["plan.html", "plan", "Businessplan"]];
+const PAGES = [["./", "aufgaben", "Aufgaben"], ["zeitplan.html", "zeitplan", "Zeitplan"], ["tagebuch.html", "tagebuch", "Tagebuch"], ["fragen.html", "fragen", "Fragen"], ["plan.html", "plan", "Businessplan"]];
 function shell(page) {
   const wrap = $("wrap"), main = $("main");
   const now = new Date(); now.setHours(0, 0, 0, 0);
@@ -279,7 +290,7 @@ function shell(page) {
     h("div", { class: "count" }, h("b", {}, days), h("span", {}, "Tage bis zur Präsentation bei KitzSki (Feb 2027)")));
   const nav = h("div", { class: "navbar" },
     h("nav", { class: "tabs" }, ...PAGES.map(([href, key, label]) =>
-      h("a", { href, "aria-current": key === page ? "page" : null }, label, key === "fragen" ? h("span", { class: "n", id: "nav-q", hidden: true }) : null))),
+      h("a", { href, "aria-current": key === page ? "page" : null }, label, key === "fragen" || key === "tagebuch" ? h("span", { class: "n", id: "nav-" + key, hidden: true }) : null))),
     h("div", { class: "userbox", id: "userbox" }));
   const login = h("section", { class: "panel login", id: "login", hidden: true },
     h("h2", {}, "Anmelden"),
@@ -305,8 +316,9 @@ function renderUserbox() {
   box.replaceChildren(h("img", { src: SK.me.avatar_url, alt: "" }), h("span", {}, firstName(SK.me.login)),
     h("button", { class: "link", type: "button", onclick: () => act(SK.refresh, "Aktualisiert.") }, "Aktualisieren"),
     h("button", { class: "link", type: "button", onclick: () => logout() }, "Abmelden"));
-  const open = SK.data.questions.filter(q => !isSettled(q)).length, n = $("nav-q");
-  if (n) { n.textContent = open; n.hidden = !open; }
+  const badge = (id, n) => { const el = $(id); if (el) { el.textContent = n; el.hidden = !n; } };
+  badge("nav-fragen", questionsToNotice().length);
+  badge("nav-tagebuch", newDiaryCount());
 }
 function logout(msg) {
   SK.token = null; SK.me = null; store(TOKEN_KEY, null);
@@ -329,20 +341,22 @@ async function boot() {
   try {
     SK.me = await api("/user");
     // „Neu“ = seit dem letzten Besuch; innerhalb einer Sitzung bleibt der Vergleichspunkt gleich
+    const key = SEEN_KEY + "-" + SK.page;
     let seen = 0;
-    try { seen = Number(sessionStorage.getItem(SEEN_KEY) || 0); } catch {}
-    if (!seen) seen = Number(load(SEEN_KEY) || 0);
+    try { seen = Number(sessionStorage.getItem(key) || 0); } catch {}
+    if (!seen) seen = Number(load(key) || 0);
     SK.prevSeen = seen;
-    try { sessionStorage.setItem(SEEN_KEY, String(seen)); } catch {}
+    try { sessionStorage.setItem(key, String(seen)); } catch {}
     await refresh();
-    store(SEEN_KEY, String(Date.now()));
+    store(key, String(Date.now()));
     status("");
   } catch (e) { if (e.message !== "401") status("Laden hat nicht geklappt: " + e.message, true); }
 }
 
 // Jede Seite ruft das auf: welche Daten sie braucht und wie sie sich zeichnet.
 function startPage(page, needs, render) {
-  pageNeeds = ["people", "questions", ...needs];
+  SK.page = page;
+  pageNeeds = ["people", "questions", "diary", ...needs];
   pageRender = render;
   shell(page);
   SK.token = load(TOKEN_KEY);

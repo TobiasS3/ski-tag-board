@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Tagebuch · Ski Tag Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap" id="wrap">
+  <main id="main" hidden>
+    <section class="panel">
+      <h2>Was hast du heute gemacht?</h2>
+      <form class="add" id="f-log">
+        <textarea id="log-text" placeholder="z. B. Kapitel Akku im Hardware-Buch geschrieben" required aria-label="Was hast du heute gemacht"></textarea>
+        <div class="row">
+          <select id="log-area" class="grow" aria-label="Bereich"></select>
+          <button class="btn" type="submit">Eintragen</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Tagebuch</h2><span class="muted small" id="count"></span></div>
+      <div class="row">
+        <select id="f-time" class="grow" aria-label="Zeitraum">
+          <option value="new">Nur neue</option>
+          <option value="today">Heute</option>
+          <option value="week" selected>Letzte 7 Tage</option>
+          <option value="month">Letzte 30 Tage</option>
+          <option value="all">Alles</option>
+        </select>
+        <select id="f-person" class="grow" aria-label="Person"></select>
+        <select id="f-area" class="grow" aria-label="Bereich"></select>
+      </div>
+      <div class="list" id="diary"></div>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+<script>
+let editId = null, editDraft = null;
+
+function filtered() {
+  const t = $("f-time").value, who = $("f-person").value, area = $("f-area").value;
+  const day = 86400000, today = ymd(new Date());
+  return SK.data.diary.filter(c => {
+    const at = Date.parse(c.created_at);
+    if (t === "new" && !(isNew(c.created_at) && c.user && c.user.login !== SK.me.login)) return false;
+    if (t === "today" && dayKey(c.created_at) !== today) return false;
+    if (t === "week" && at < Date.now() - 7 * day) return false;
+    if (t === "month" && at < Date.now() - 30 * day) return false;
+    if (who && !(c.user && c.user.login === who)) return false;
+    if (area && parseEntry(c.body).area !== area) return false;
+    return true;
+  });
+}
+
+function entry(c) {
+  const e = parseEntry(c.body), me = SK.me.login;
+  // eigene Einträge von heute darf man noch ändern
+  const editable = c.user && c.user.login === me && dayKey(c.created_at) === ymd(new Date());
+  const fresh = isNew(c.created_at) && c.user && c.user.login !== me;
+  const top = h("div", { class: "top" }, h("b", {}, nameOf(c.user && c.user.login)), e.area ? chip(e.area) : null, h("span", {}, timeOf(c.created_at)),
+    fresh ? h("span", { class: "pill new" }, "neu") : null,
+    editable && editId !== c.id ? h("button", { class: "link", type: "button", onclick: () => { editId = c.id; editDraft = null; renderDiary(); } }, "bearbeiten") : null);
+  if (editId !== c.id) return h("div", { class: "item" + (fresh ? " is-new" : "") }, av(c.user), h("div", {}, top, h("p", {}, e.text)));
+  const ta = h("textarea", { id: "edit-text", "aria-label": "Eintrag bearbeiten" }); ta.value = editDraft ? editDraft.text : e.text;
+  const sel = h("select", { id: "edit-area", class: "grow", "aria-label": "Bereich" }); areaOptions(sel); sel.value = editDraft ? editDraft.area : (e.area || "plan");
+  const keep = () => { editDraft = { text: ta.value, area: sel.value }; };
+  ta.addEventListener("input", keep); sel.addEventListener("change", keep);
+  return h("div", { class: "item" }, av(c.user), h("div", {}, top,
+    h("form", { class: "add", style: "margin-top:6px", onsubmit: (ev) => {
+      ev.preventDefault(); const text = ta.value.trim(); if (!text) return;
+      act(async () => {
+        await api(R + "/issues/comments/" + c.id, { method: "PATCH", body: { body: "**" + AREAS[sel.value] + ":** " + text } });
+        editId = null; editDraft = null; await SK.refresh();
+      }, "Eintrag geändert.");
+    } }, ta, h("div", { class: "row" }, sel,
+      h("button", { class: "btn", type: "submit" }, "Speichern"),
+      h("button", { class: "btn ghost", type: "button", onclick: () => { editId = null; editDraft = null; renderDiary(); } }, "Abbrechen")))));
+}
+
+function renderDiary() {
+  const list = filtered();
+  $("count").textContent = list.length === 1 ? "1 Eintrag" : list.length + " Einträge";
+  if (!list.length) {
+    const msg = $("f-time").value === "new" ? (SK.prevSeen ? "Nichts Neues seit deinem letzten Besuch." : "Beim ersten Besuch ist noch nichts „neu“. Wähl oben einen anderen Zeitraum.") : "Keine Einträge für diese Auswahl.";
+    return $("diary").replaceChildren(h("p", { class: "empty" }, msg));
+  }
+  const byDay = new Map();
+  for (const c of list) { const k = dayKey(c.created_at); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(c); }
+  $("diary").replaceChildren(...[...byDay].flatMap(([k, cs]) => [h("div", { class: "day-h" }, dayLabel(k)), ...cs.map(entry)]));
+}
+
+areaOptions($("log-area"));
+areaOptions($("f-area")); $("f-area").prepend(h("option", { value: "" }, "Alle Bereiche")); $("f-area").value = "";
+for (const id of ["f-time", "f-person", "f-area"]) $(id).addEventListener("change", renderDiary);
+$("f-log").addEventListener("submit", (ev) => {
+  ev.preventDefault(); const text = $("log-text").value.trim(); if (!text) return;
+  act(async () => { await postDiary($("log-area").value, text); $("log-text").value = ""; await SK.refresh(); }, "Eingetragen.");
+});
+
+startPage("tagebuch", [], async () => {
+  peopleOptions($("f-person"), "Alle Personen");
+  if (!$("log-area").dataset.init) { $("log-area").value = CFG.areaOf[SK.me.login] || "plan"; $("log-area").dataset.init = "1"; }
+  renderDiary();
+});
+</script>
+</body>
+</html>

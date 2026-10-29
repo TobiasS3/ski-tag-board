@@ -43,7 +43,9 @@ const drafts = {}, opened = new Set();
 
 function questionRow(q) {
   const me = SK.me.login, to = recipientOf(q), settled = isSettled(q), body = bodyWithoutRecipient(q.body);
-  const answers = q.comments.nodes, fresh = isNew(q.createdAt) || answers.some(c => isNew(c.createdAt));
+  const answers = q.comments.nodes;
+  const byOther = (a, iso) => a && a.login !== me && isNew(iso);
+  const fresh = byOther(q.author, q.createdAt) || answers.some(c => byOther(c.author, c.createdAt));
   const row = h("details", { class: "qrow" + (settled ? " settled" : ""), id: "q" + q.number, open: opened.has(q.number) || null,
     ontoggle: (e) => e.target.open ? opened.add(q.number) : opened.delete(q.number) },
     h("summary", {}, av(q.author),
@@ -55,7 +57,8 @@ function questionRow(q) {
   const inner = h("div", { class: "q-inner" });
   if (body && body !== "(keine Details)") inner.append(h("div", { class: "body muted" }, body));
   for (const c of answers) inner.append(h("div", { class: "cmt" }, av(c.author), h("div", {},
-    h("div", { class: "row small" }, h("b", {}, firstName(c.author && c.author.login)), h("span", { class: "muted" }, ago(c.createdAt))),
+    h("div", { class: "row small" }, h("b", {}, firstName(c.author && c.author.login)), h("span", { class: "muted" }, ago(c.createdAt)),
+      byOther(c.author, c.createdAt) ? h("span", { class: "pill new" }, "neu") : null),
     h("p", {}, c.body))));
   if (settled) {
     inner.append(h("div", {}, h("button", { class: "link", type: "button", onclick: () => act(async () => { await settleQuestion(q, false); await SK.refresh(); }, "Wieder offen.") }, "wieder öffnen")));
