@@ -32,9 +32,25 @@
       </details>
     </section>
 
-    <section class="panel" id="free-box" hidden>
-      <h2>Noch niemand zuständig</h2>
-      <div id="free"></div>
+    <section class="panel">
+      <div class="panel-head"><h2>Aufgaben der anderen</h2><span class="muted small" id="others-count"></span></div>
+      <div class="row">
+        <select id="f-who" class="grow" aria-label="Wessen Aufgaben"></select>
+        <select id="f-state" class="grow" aria-label="Status">
+          <option value="open" selected>Offen</option>
+          <option value="closed">Erledigt</option>
+          <option value="all">Alle</option>
+        </select>
+      </div>
+      <div id="others"></div>
+    </section>
+
+    <section class="panel" id="deleted-box" hidden>
+      <details class="more">
+        <summary id="deleted-sum">Gelöscht</summary>
+        <p class="muted small">Wiederherstellen holt die Aufgabe zurück, ohne Zuständigen. Dann kann sie jeder übernehmen.</p>
+        <div id="deleted"></div>
+      </details>
     </section>
   </main>
 </div>
@@ -49,9 +65,8 @@ function render() {
   $("mine-count").textContent = mine.length ? mine.length + " offen" : "";
   $("mine").replaceChildren(...(mine.length ? mine.map(i => taskRow(i)) : [h("p", { class: "empty" }, "Du hast gerade keine offenen Aufgaben.")]));
 
-  const free = open.filter(isFree).sort(byEnd);
-  $("free-box").hidden = !free.length;
-  $("free").replaceChildren(...free.map(i => taskRow(i)));
+  renderOthers();
+  renderDeleted();
 
   $("done-box").hidden = !done.length;
   $("done-sum").textContent = "Erledigt (" + done.length + ")";
@@ -63,6 +78,47 @@ function render() {
   ph.replaceChildren(...SK.data.milestones.map(m => h("option", { value: m.number }, m.title)));
   if (keep) ph.value = keep;
 }
+
+function renderOthers() {
+  const me = SK.me.login, who = $("f-who"), keep = who.value;
+  who.replaceChildren(h("option", { value: "" }, "Alle anderen"),
+    ...SK.data.people.filter(p => p.login !== me).map(p => h("option", { value: p.login }, nameOf(p.login))),
+    h("option", { value: "-" }, "Noch niemand zuständig"));
+  who.value = keep;
+  const st = $("f-state").value;
+  let list = SK.data.issues.filter(i => !isMine(i));
+  if (who.value === "-") list = list.filter(isFree);
+  else if (who.value) list = list.filter(i => (i.assignees || []).some(a => a.login === who.value));
+  if (st !== "all") list = list.filter(i => i.state === st);
+  list.sort((a, b) => (a.state === "closed") - (b.state === "closed") || byEnd(a, b));
+  $("others-count").textContent = list.length === 1 ? "1 Aufgabe" : list.length + " Aufgaben";
+  // bei „Alle anderen“ nach Person gruppieren
+  const parts = [];
+  if (!who.value) {
+    for (const p of SK.data.people.filter(p => p.login !== me)) {
+      const l = list.filter(i => (i.assignees || []).some(a => a.login === p.login));
+      if (l.length) parts.push(h("h3", {}, nameOf(p.login)), h("div", {}, ...l.map(i => taskRow(i))));
+    }
+    const f = list.filter(isFree);
+    if (f.length) parts.push(h("h3", {}, "Noch niemand zuständig"), h("div", {}, ...f.map(i => taskRow(i))));
+  } else parts.push(...list.map(i => taskRow(i)));
+  $("others").replaceChildren(...(parts.length ? parts : [h("p", { class: "empty" }, "Keine Aufgaben für diese Auswahl.")]));
+}
+
+function renderDeleted() {
+  const list = [...(SK.data.deleted || [])].sort((a, b) => String(b.closed_at).localeCompare(String(a.closed_at)));
+  $("deleted-box").hidden = !list.length;
+  $("deleted-sum").textContent = "Gelöscht (" + list.length + ")";
+  $("deleted").replaceChildren(...list.map(i => h("div", { class: "task" },
+    h("span"),
+    h("div", {}, h("span", { class: "t muted" }, i.title), h("div", { class: "sub" }, chip(areaOfIssue(i)), h("span", {}, "gelöscht am " + dateOf(i.closed_at)))),
+    h("button", { class: "btn ghost small", type: "button", onclick: () => act(async () => {
+      await restoreTask(i); await SK.refresh(); return () => dropTask(i.number);
+    }, "Wiederhergestellt. Steht jetzt bei „Noch niemand zuständig“.") }, "Wiederherstellen"))));
+}
+
+$("f-who").addEventListener("change", renderOthers);
+$("f-state").addEventListener("change", renderOthers);
 
 $("f-task").addEventListener("submit", (ev) => {
   ev.preventDefault(); const title = $("t-title").value.trim(); if (!title) return;

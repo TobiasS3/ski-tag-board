@@ -125,7 +125,9 @@ async function loadTasks() {
   const d = SK.data;
   const [ms, issues] = await Promise.all([all(R + "/milestones?state=all"), all(R + "/issues?state=all")]);
   d.milestones = ms.sort((a, b) => String(a.due_on).localeCompare(String(b.due_on)));
-  d.issues = issues.filter(i => !i.pull_request && i.number !== CFG.diary && i.state_reason !== "not_planned");
+  const real = issues.filter(i => !i.pull_request && i.number !== CFG.diary);
+  d.issues = real.filter(i => i.state_reason !== "not_planned");
+  d.deleted = real.filter(i => i.state_reason === "not_planned");
   await Promise.all(d.issues.filter(i => i.state === "closed" && !d.closers[i.number]).map(async i => {
     try { d.closers[i.number] = (await api(R + "/issues/" + i.number)).closed_by; } catch {}
   }));
@@ -274,6 +276,8 @@ const ownerName = (i) => (i.assignees || []).map(a => firstName(a.login)).join("
 async function takeOver(i) {
   await api(R + "/issues/" + i.number, { method: "PATCH", body: { assignees: [SK.me.login] } });
 }
+// Gelöschte Aufgabe zurückholen: wieder offen, ohne Zuständigen
+const restoreTask = (i) => api(R + "/issues/" + i.number, { method: "PATCH", body: { state: "open", assignees: [] } });
 const giveBack = (i) => api(R + "/issues/" + i.number, { method: "PATCH", body: { assignees: [] } });
 function tickBox(i) {
   if (isMine(i)) return h("input", { type: "checkbox", id: "t-" + i.number, checked: i.state === "closed", "aria-label": "Erledigt: " + i.title,
