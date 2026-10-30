@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=1793360986">
+<link rel="stylesheet" href="style.css?v=1793361328">
 </head>
 <body>
 <div class="wrap" id="wrap">
@@ -36,7 +36,7 @@
     </section>
   </main>
 </div>
-<script src="app.js?v=1793360986"></script>
+<script src="app.js?v=1793361328"></script>
 <script>
 let editing = null, asking = null, editDraft = null, drawn = "";
 const comment = (id) => R + "/issues/comments/" + id;
@@ -128,10 +128,6 @@ $("f-link").addEventListener("submit", (ev) => {
 });
 
 startPage("chat", [], async () => render());
-// Im Chat öfter nachschauen als auf den anderen Seiten
-setInterval(() => {
-  if (SK.token && SK.me && !busy && document.visibilityState === "visible") loadChat().then(() => render()).catch(() => {});
-}, 5000);
 </script>
 </body>
 </html>

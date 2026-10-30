@@ -18,7 +18,7 @@ const CFG = {
 const AREAS = { hardware: "Hardware", netzwerk: "Netzwerk", wirtschaft: "Wirtschaft & Verkauf", app: "App", plan: "Plan" };
 const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen2"; // „2“: Stand einmal zurückgesetzt, damit die letzten 7 Tage als neu erscheinen
 const R = "/repos/" + CFG.owner + "/" + CFG.repo;
-const APP_VERSION = "1793360986"; // wird von bump.py gesetzt
+const APP_VERSION = "1793361328"; // wird von bump.py gesetzt
 const PUSH_KEY = "BDt9RkhaUrmGIJnyOg9suNNcrO5zHECtpFLbfVVyp8qQ6uzGEwVTHYhlB3SUzyqnHxOgY-tvPYC9PUWrwE3UEvQ", PUSH_DIR = "daten/push";
 
 // Läuft schon eine neuere Version online? Dann einmal frisch laden, damit nicht alte und neue Teile gemischt werden.
@@ -33,7 +33,7 @@ async function checkVersion() {
 
 const SK = {
   token: null, me: null,
-  data: { people: [], names: {}, milestones: [], issues: [], closers: {}, diary: [], chat: [], links: [], questions: [], qa: null, repoId: null },
+  data: { people: [], names: {}, milestones: [], issues: [], closers: {}, events: [], diary: [], chat: [], links: [], questions: [], qa: null, repoId: null },
   prevSeen: 0,
 };
 
@@ -91,7 +91,10 @@ function status(text, isErr) {
 }
 
 // ---------- GitHub-API ----------
+// GET mit ETag: Hat sich nichts geändert, antwortet GitHub mit 304, und das zählt nicht gegen das Anfragen-Limit
+const etags = new Map();
 async function api(path, opts = {}) {
+  const known = !opts.method ? etags.get(path + "|" + opts.accept) : null;
   const r = await fetch("https://api.github.com" + path, {
     method: opts.method || "GET",
     cache: "no-store",
@@ -99,10 +102,12 @@ async function api(path, opts = {}) {
       Authorization: "Bearer " + SK.token,
       Accept: opts.accept || "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
+      ...(known ? { "If-None-Match": known.etag } : {}),
       ...(opts.body ? { "Content-Type": "application/json" } : {}),
     },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
+  if (r.status === 304 && known) return known.data;
   if (r.status === 401) { logout("Der Token gilt nicht mehr. Bitte neu anmelden."); throw new Error("401"); }
   if (!r.ok) {
     let msg = String(r.status);
@@ -111,7 +116,9 @@ async function api(path, opts = {}) {
     err.status = r.status; throw err;
   }
   if (r.status === 204) return null;
-  return opts.accept && opts.accept.includes("raw") ? r.text() : r.json();
+  const data = await (opts.accept && opts.accept.includes("raw") ? r.text() : r.json());
+  if (!opts.method && r.headers.get("ETag")) etags.set(path + "|" + opts.accept, { etag: r.headers.get("ETag"), data });
+  return data;
 }
 async function gql(query, variables) {
   const res = await api("/graphql", { method: "POST", body: { query, variables } });
@@ -141,7 +148,8 @@ async function loadPeople() {
 }
 async function loadTasks() {
   const d = SK.data;
-  const [ms, issues] = await Promise.all([all(R + "/milestones?state=all"), all(R + "/issues?state=all")]);
+  const [ms, issues, events] = await Promise.all([all(R + "/milestones?state=all"), all(R + "/issues?state=all"), all(R + "/issues/events", 5)]);
+  d.events = events;
   d.milestones = ms.sort((a, b) => String(a.due_on).localeCompare(String(b.due_on)));
   const real = issues.filter(i => !i.pull_request && ![CFG.diary, CFG.chat, CFG.links].includes(i.number));
   d.issues = real.filter(i => i.state_reason !== "not_planned");
@@ -155,7 +163,7 @@ async function loadDiary() {
 }
 // Auf den anderen Seiten reichen die letzten 30 Tage für Lichter und „Neu“; die Chat-Seite lädt alles
 async function loadChat() {
-  const d = SK.data, since = SK.page === "chat" ? "" : "?since=" + new Date(Date.now() - 30 * 86400000).toISOString();
+  const d = SK.data, since = SK.page === "chat" ? "" : "?since=" + ymd(new Date(Date.now() - 30 * 86400000)) + "T00:00:00Z"; // ganzer Tag, damit die Adresse gleich bleibt und der ETag greift
   const [chat, links] = await Promise.all([all(R + "/issues/" + CFG.chat + "/comments" + since, 50), all(R + "/issues/" + CFG.links + "/comments")]);
   d.chat = chat; d.links = links;
 }
@@ -226,6 +234,10 @@ function newItems(base) {
     out.push({ id: "m" + c.id, at: c.created_at, who: c.user, kind: "Chat", text: c.body, href: "chat.html" });
   for (const c of SK.data.links) if (other(c.user, c.created_at))
     out.push({ id: "l" + c.id, at: c.created_at, who: c.user, kind: "Neuer Link", text: parseLink(c).title, href: "chat.html" });
+  // Aufgabe weggenommen: nur für den, der zuständig war, und nur solange er sie nicht wiederbekommen hat (z. B. nach „Rückgängig“)
+  for (const e of SK.data.events) if (e.event === "unassigned" && e.assignee && e.assignee.login === me && other(e.actor, e.created_at) && e.issue
+    && !SK.data.events.some(x => x.event === "assigned" && x.assignee && x.assignee.login === me && x.issue && x.issue.number === e.issue.number && x.created_at >= e.created_at))
+    out.push({ id: "u" + e.id, at: e.created_at, who: e.actor, kind: "Aufgabe weggenommen", text: e.issue.title, sub: firstName(e.actor.login) + " hat dich als zuständig entfernt.", href: "zeitplan.html" });
   // jede neue Aufgabe sehen alle; gelöschte sind in SK.data.issues nicht mehr drin und verschwinden damit auch hier
   for (const i of SK.data.issues) if (i.state === "open" && other(i.user, i.created_at)) {
     const kind = isMine(i) ? "Neue Aufgabe für dich" : isFree(i) ? "Neue Aufgabe, noch niemand zuständig" : "Neue Aufgabe für " + ownerName(i);
@@ -491,14 +503,20 @@ function logout(msg) {
   if (msg) $("login").prepend(h("p", { class: "notice err" }, msg));
 }
 
-let pageRender = null, pageNeeds = [];
-async function refresh() {
+let pageRender = null, pageNeeds = [], drawnData = null;
+// quiet: nur neu zeichnen, wenn sich etwas geändert hat (sonst gehen z. B. offene Rückfragen verloren).
+// lightsOnly: während jemand tippt, nur die Lichter im Menü aktualisieren.
+async function refresh({ quiet, lightsOnly } = {}) {
   const jobs = { people: loadPeople, tasks: loadTasks, diary: loadDiary, chat: loadChat, questions: loadQuestions };
   await Promise.all(pageNeeds.filter(k => jobs[k]).map(k => jobs[k]()));
   renderUserbox();
+  if (lightsOnly) return;
+  const now = JSON.stringify(SK.data);
+  if (quiet && now === drawnData) return;
+  drawnData = now;
   if (pageRender) await pageRender();
 }
-SK.refresh = refresh;
+SK.refresh = () => refresh();
 
 async function boot() {
   $("login").hidden = true; $("main").hidden = false;
@@ -528,13 +546,16 @@ function startPage(page, needs, render) {
   shell(page);
   SK.token = load(TOKEN_KEY);
   if (SK.token) boot(); else { $("main").hidden = true; $("login").hidden = false; }
-  // Alle 30 Sekunden neu laden und sofort, wenn man zum Tab zurückkommt, damit man Änderungen der anderen gleich sieht.
+  // Alle 5 Sekunden neu laden und sofort, wenn man zum Tab zurückkommt, damit man Änderungen der anderen gleich sieht.
   // Felder mit data-live werden beim Neuzeichnen nicht ersetzt, da darf man auch während des Tippens aktualisieren.
+  let loading = false;
   const auto = () => {
-    if (SK.token && SK.me && !busy && document.visibilityState === "visible" && (document.activeElement.matches("[data-live]") || !document.activeElement.matches("textarea, input[type=text], input[type=number], input[type=date], select")))
-      refresh().catch(() => {});
+    if (loading || !SK.token || !SK.me || busy || document.visibilityState !== "visible") return;
+    const el = document.activeElement, typing = !el.matches("[data-live]") && el.matches("textarea, input[type=text], input[type=number], input[type=date], select");
+    loading = true;
+    refresh({ quiet: true, lightsOnly: typing }).catch(() => {}).finally(() => { loading = false; });
   };
-  setInterval(auto, 30000);
+  setInterval(auto, 5000);
   document.addEventListener("visibilitychange", auto);
   window.addEventListener("focus", auto);
 }
