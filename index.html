@@ -12,18 +12,21 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=1793360426">
+<link rel="stylesheet" href="style.css?v=1793360599">
 </head>
 <body>
 <div class="wrap" id="wrap">
   <main id="main" hidden>
     <section class="panel">
       <h2>Neue Aufgabe</h2>
-      <form class="row" id="f-task">
-        <input type="text" id="t-title" class="grow" style="flex:3 1 240px" placeholder="Was ist zu tun?" required aria-label="Aufgabe">
-        <select id="t-who" class="grow" aria-label="Wer"></select>
-        <select id="t-phase" class="grow" aria-label="Phase"></select>
-        <button class="btn" type="submit">Hinzufügen</button>
+      <form class="add" id="f-task">
+        <div class="row">
+          <input type="text" id="t-title" class="grow" style="flex:3 1 240px" placeholder="Was ist zu tun?" required aria-label="Aufgabe">
+          <select id="t-who" class="grow" aria-label="Wer"></select>
+          <select id="t-phase" class="grow" aria-label="Phase"></select>
+        </div>
+        <textarea id="t-note" placeholder="Notiz (optional)" aria-label="Notiz"></textarea>
+        <div class="row"><button class="btn" type="submit">Hinzufügen</button></div>
       </form>
     </section>
 
@@ -58,7 +61,7 @@
     </section>
   </main>
 </div>
-<script src="app.js?v=1793360426"></script>
+<script src="app.js?v=1793360599"></script>
 <script>
 const byEnd = (a, b) => ((taskRange(a) || {}).end || 9e15) - ((taskRange(b) || {}).end || 9e15);
 
@@ -127,10 +130,10 @@ $("f-state").addEventListener("change", renderOthers);
 $("f-task").addEventListener("submit", (ev) => {
   ev.preventDefault(); const title = $("t-title").value.trim(); if (!title) return;
   const who = $("t-who").value;
-  const body = { title, labels: [CFG.areaOf[who] || "plan"] };
+  const body = { title, body: $("t-note").value.trim(), labels: [CFG.areaOf[who] || "plan"] };
   if ($("t-phase").value) body.milestone = Number($("t-phase").value);
   if (who) body.assignees = [who];
-  act(async () => { const c = await api(R + "/issues", { method: "POST", body }); $("t-title").value = ""; await SK.refresh(); return () => dropTask(c.number); }, "Aufgabe angelegt.");
+  act(async () => { const c = await api(R + "/issues", { method: "POST", body }); $("t-title").value = ""; $("t-note").value = ""; await SK.refresh(); return () => dropTask(c.number); }, "Aufgabe angelegt.");
 });
 
 startPage("aufgaben", ["tasks"], render);

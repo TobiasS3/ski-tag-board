@@ -16,7 +16,7 @@ const CFG = {
 const AREAS = { hardware: "Hardware", netzwerk: "Netzwerk", wirtschaft: "Wirtschaft & Verkauf", app: "App", plan: "Plan" };
 const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen2"; // „2“: Stand einmal zurückgesetzt, damit die letzten 7 Tage als neu erscheinen
 const R = "/repos/" + CFG.owner + "/" + CFG.repo;
-const APP_VERSION = "1793360426"; // wird von bump.py gesetzt
+const APP_VERSION = "1793360599"; // wird von bump.py gesetzt
 const PUSH_KEY = "BDt9RkhaUrmGIJnyOg9suNNcrO5zHECtpFLbfVVyp8qQ6uzGEwVTHYhlB3SUzyqnHxOgY-tvPYC9PUWrwE3UEvQ", PUSH_DIR = "daten/push";
 
 // Läuft schon eine neuere Version online? Dann einmal frisch laden, damit nicht alte und neue Teile gemischt werden.
@@ -404,7 +404,7 @@ function taskActions(i) {
   return box;
 }
 function taskRow(i, onOpen) {
-  const closer = SK.data.closers[i.number], r = taskRange(i);
+  const closer = SK.data.closers[i.number], r = taskRange(i), note = (i.body || "").replace(RANGE_RE, "").trim();
   return h("div", { class: "task" + (i.state === "closed" ? " done" : "") },
     tickBox(i),
     h("div", {},
@@ -414,7 +414,8 @@ function taskRow(i, onOpen) {
         (i.assignees || []).length ? h("span", { class: "who" }, ...i.assignees.map(a => h("img", { src: a.avatar_url, alt: nameOf(a.login), title: nameOf(a.login) }))) : h("span", {}, "niemand zuständig"),
         r ? h("span", {}, r.start.toLocaleDateString("de-AT", { day: "numeric", month: "short" }) + " – " + r.end.toLocaleDateString("de-AT", { day: "numeric", month: "short" })) : null,
         i.state === "closed" ? h("span", {}, "erledigt" + (closer ? " von " + firstName(closer.login) : "") + " am " + dateOf(i.closed_at)) : null,
-        isFree(i) && i.state === "open" ? h("button", { class: "link", type: "button", onclick: () => act(async () => { await takeOver(i); await SK.refresh(); return () => giveBack(i); }, "Übernommen.") }, "Übernehmen") : null)),
+        isFree(i) && i.state === "open" ? h("button", { class: "link", type: "button", onclick: () => act(async () => { await takeOver(i); await SK.refresh(); return () => giveBack(i); }, "Übernommen.") }, "Übernehmen") : null),
+      note ? h("p", { class: "muted small", style: "margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere" }, note) : null),
     taskActions(i));
 }
 
