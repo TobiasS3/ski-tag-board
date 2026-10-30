@@ -228,6 +228,14 @@ details.more > summary { cursor: pointer; color: var(--muted); font-size: 15px; 
 .new-item p { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .new-link:hover p { text-decoration: underline; }
 @media (max-width: 520px) { .new-item { grid-template-columns: 14px 28px 1fr; } .new-item > .btn { grid-column: 3; justify-self: start; } }
+.chat-img { display: block; margin-top: 6px; width: fit-content; }
+.chat-img img { display: block; max-width: 100%; max-height: 320px; border-radius: 8px; }
+.chat-img.waiting { min-height: 80px; min-width: 120px; background: var(--soft); border-radius: 8px; }
+.chat-pending { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-pending:empty { display: none; }
+.chat-pending span { position: relative; display: block; }
+.chat-pending img { display: block; height: 72px; border-radius: 8px; }
+.chat-pending button { position: absolute; top: 2px; right: 2px; }
 .chat-list { max-height: 60vh; overflow-y: auto; margin: 12px 0; }
 #links-box { margin-top: 8px; }
 #links-box #f-link { margin-top: 8px; }

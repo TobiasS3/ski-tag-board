@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=1793361533">
+<link rel="stylesheet" href="style.css?v=1793362528">
 </head>
 <body>
 <div class="wrap" id="wrap">
@@ -28,15 +28,35 @@
           <button class="btn" type="submit">Link speichern</button>
         </form>
       </details>
+      <div class="row" style="margin-top:12px">
+        <select id="c-days" data-live class="grow" aria-label="Zeitraum">
+          <option value="1">Heute</option>
+          <option value="7">Letzte 7 Tage</option>
+          <option value="30">Letzte 30 Tage</option>
+          <option value="0">Alle Tage</option>
+        </select>
+        <select id="c-count" data-live class="grow" aria-label="Wie viele Nachrichten">
+          <option value="20">Höchstens 20 Nachrichten</option>
+          <option value="50">Höchstens 50 Nachrichten</option>
+          <option value="100">Höchstens 100 Nachrichten</option>
+          <option value="0">Alle Nachrichten</option>
+        </select>
+        <span class="muted small" id="c-shown"></span>
+      </div>
       <div class="chat-list" id="chat"></div>
       <form class="add" id="f-chat">
-        <textarea id="c-text" data-live placeholder="Nachricht an alle …" required aria-label="Nachricht"></textarea>
-        <div class="row"><button class="btn" type="submit">Senden</button><span class="muted small">Enter sendet, Shift+Enter macht eine neue Zeile.</span></div>
+        <div class="chat-pending" id="c-pending"></div>
+        <textarea id="c-text" data-live placeholder="Nachricht an alle …" aria-label="Nachricht"></textarea>
+        <div class="row">
+          <button class="btn" type="submit">Senden</button>
+          <button class="btn ghost" type="button" id="c-pick">Bild anhängen</button>
+          <span class="muted small">Enter sendet, Shift+Enter macht eine neue Zeile. Bilder kannst du auch einfügen oder hineinziehen.</span>
+        </div>
       </form>
     </section>
   </main>
 </div>
-<script src="app.js?v=1793361533"></script>
+<script src="app.js?v=1793362528"></script>
 <script>
 let editing = null, asking = null, editDraft = null, drawn = "";
 const comment = (id) => R + "/issues/comments/" + id;
@@ -60,6 +80,11 @@ function removeComment(c, issue, okText) {
     return () => api(R + "/issues/" + issue + "/comments", { method: "POST", body: { body } });
   }, okText);
 }
+// Geladenes Bild macht die Liste länger: unten bleiben, wenn man unten war
+function keepBottom(img) {
+  const list = $("chat");
+  if (list.scrollHeight - list.scrollTop - list.clientHeight - img.height < 80) list.scrollTop = list.scrollHeight;
+}
 function message(c) {
   const own = c.user && c.user.login === SK.me.login;
   const fresh = !own && isNew(c.created_at);
@@ -69,17 +94,18 @@ function message(c) {
     fresh ? h("span", { class: "pill new" }, "neu") : null,
     own && editing !== c.id ? h("button", { class: "link", type: "button", onclick: () => { editing = c.id; editDraft = null; render(); } }, "bearbeiten") : null,
     own && editing !== c.id ? askDelete(c.id, "Nachricht löschen", () => removeComment(c, CFG.chat, "Nachricht gelöscht.")) : null);
-  if (editing !== c.id) return h("div", { class: "item" + (fresh ? " is-new" : "") }, av(c.user), h("div", {}, top, h("p", {}, ...withLinks(c.body))));
+  const { text, images } = splitChat(c.body);
+  if (editing !== c.id) return h("div", { class: "item" + (fresh ? " is-new" : "") }, av(c.user), h("div", {}, top, text ? h("p", {}, ...withLinks(text)) : null, images.map(p => chatImage(p, keepBottom))));
   const ta = h("textarea", { "aria-label": "Nachricht bearbeiten", oninput: (e) => { editDraft = e.target.value; } });
-  ta.value = editDraft ?? c.body;
+  ta.value = editDraft ?? text;
   return h("div", { class: "item" }, av(c.user), h("div", {}, top, h("form", { class: "add", style: "margin-top:6px", onsubmit: (ev) => {
-    ev.preventDefault(); const text = ta.value.trim(); if (!text) return;
+    ev.preventDefault(); const next = joinChat(ta.value.trim(), images); if (!next) return;
     act(async () => {
       const before = c.body;
-      await api(comment(c.id), { method: "PATCH", body: { body: text } }); editing = null; editDraft = null; await SK.refresh();
+      await api(comment(c.id), { method: "PATCH", body: { body: next } }); editing = null; editDraft = null; await SK.refresh();
       return () => api(comment(c.id), { method: "PATCH", body: { body: before } });
     }, "Nachricht geändert.");
-  } }, ta, h("div", { class: "row" },
+  } }, ta, images.map(p => chatImage(p)), h("div", { class: "row" },
     h("button", { class: "btn", type: "submit" }, "Speichern"),
     h("button", { class: "btn ghost", type: "button", onclick: () => { editing = null; editDraft = null; render(); } }, "Abbrechen")))));
 }
@@ -91,8 +117,15 @@ function linkRow(c) {
     own ? askDelete(c.id, "Link löschen", () => removeComment(c, CFG.links, "Link gelöscht.")) : null)));
 }
 // Nur neu zeichnen, wenn sich etwas geändert hat, sonst springt die Liste alle paar Sekunden
+function visibleChat() {
+  const days = Number($("c-days").value), count = Number($("c-count").value);
+  const from = new Date(); from.setHours(0, 0, 0, 0); from.setDate(from.getDate() - days + 1);
+  const list = days ? SK.data.chat.filter(c => Date.parse(c.created_at) >= from) : SK.data.chat;
+  return count ? list.slice(-count) : list; // die neuesten, unten im Chat
+}
 function render(toBottom) {
-  const d = SK.data, sig = JSON.stringify([d.chat.map(c => [c.id, c.updated_at]), d.links.map(c => c.id), editing, asking]);
+  const d = SK.data, shown = visibleChat();
+  const sig = JSON.stringify([shown.map(c => [c.id, c.updated_at]), d.chat.length, d.links.map(c => c.id), editing, asking]);
   if (document.visibilityState === "visible") store(SEEN_KEY + "-chat", String(Date.now()));
   if (sig === drawn) return;
   const list = $("chat"), first = !drawn, atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
@@ -100,22 +133,31 @@ function render(toBottom) {
   $("links-sum").textContent = "Links (" + d.links.length + ")";
   $("links").replaceChildren(...(d.links.length ? d.links.map(linkRow) : [h("p", { class: "empty" }, "Noch keine Links.")]));
   const byDay = new Map();
-  for (const c of d.chat) { const k = dayKey(c.created_at); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(c); }
+  $("c-shown").textContent = shown.length + " von " + d.chat.length + " Nachrichten";
+  for (const c of shown) { const k = dayKey(c.created_at); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(c); }
   const keep = list.scrollTop;
-  list.replaceChildren(...(d.chat.length ? [...byDay].flatMap(([k, cs]) => [h("div", { class: "day-h" }, dayLabel(k)), ...cs.map(message)]) : [h("p", { class: "empty" }, "Noch keine Nachrichten. Schreib die erste.")]));
+  list.replaceChildren(...(shown.length ? [...byDay].flatMap(([k, cs]) => [h("div", { class: "day-h" }, dayLabel(k)), ...cs.map(message)]) : [h("p", { class: "empty" }, d.chat.length ? "Keine Nachrichten in diesem Zeitraum. Stell oben einen längeren Zeitraum ein." : "Noch keine Nachrichten. Schreib die erste.")]));
   list.scrollTop = first || toBottom || atEnd ? list.scrollHeight : keep;
 }
 
 function send() {
-  const text = $("c-text").value.trim(); if (!text) return;
+  const text = $("c-text").value.trim(); if (!text && !pick.has()) return;
   act(async () => {
-    const c = await api(R + "/issues/" + CFG.chat + "/comments", { method: "POST", body: { body: text } });
-    $("c-text").value = ""; await SK.refresh(); render(true);
+    const paths = await pick.upload();
+    const c = await api(R + "/issues/" + CFG.chat + "/comments", { method: "POST", body: { body: joinChat(text, paths) } });
+    $("c-text").value = ""; pick.clear(); await SK.refresh(); render(true);
     return () => api(comment(c.id), { method: "DELETE" });
   }, "Gesendet.").then(() => $("c-text").focus());
 }
 $("f-chat").addEventListener("submit", (ev) => { ev.preventDefault(); send(); });
 $("c-text").addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); send(); } });
+// Einstellung merken (nur in diesem Browser)
+for (const [id, key, standard] of [["c-days", "skitag-chat-days", "7"], ["c-count", "skitag-chat-count", "50"]]) {
+  $(id).value = load(key) || standard;
+  $(id).addEventListener("change", (ev) => { store(key, ev.target.value); if (SK.me) render(true); });
+}
+const pick = imagePicker();
+$("c-pending").replaceWith(pick.box); $("c-pick").replaceWith(pick.button, pick.file); pick.watch($("f-chat"));
 $("f-link").addEventListener("submit", (ev) => {
   ev.preventDefault(); const title = $("l-title").value.replace(/\s+/g, " ").trim(), url = safeUrl($("l-url").value.trim());
   if (!title) return;

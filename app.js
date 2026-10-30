@@ -18,7 +18,7 @@ const CFG = {
 const AREAS = { hardware: "Hardware", netzwerk: "Netzwerk", wirtschaft: "Wirtschaft & Verkauf", app: "App", plan: "Plan" };
 const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen2"; // „2“: Stand einmal zurückgesetzt, damit die letzten 7 Tage als neu erscheinen
 const R = "/repos/" + CFG.owner + "/" + CFG.repo;
-const APP_VERSION = "1793361533"; // wird von bump.py gesetzt
+const APP_VERSION = "1793362528"; // wird von bump.py gesetzt
 const PUSH_KEY = "BDt9RkhaUrmGIJnyOg9suNNcrO5zHECtpFLbfVVyp8qQ6uzGEwVTHYhlB3SUzyqnHxOgY-tvPYC9PUWrwE3UEvQ", PUSH_DIR = "daten/push";
 
 // Läuft schon eine neuere Version online? Dann einmal frisch laden, damit nicht alte und neue Teile gemischt werden.
@@ -195,6 +195,14 @@ function parseLink(c) {
   const [title, url] = (c.body || "").split("\n");
   return { title: title || "", url: safeUrl((url || "").trim()) };
 }
+// Bilder im Chat stehen als eigene Zeile „![Bild](daten/chat-bilder/…)“ in der Nachricht
+const CHAT_IMG = /^!\[Bild\]\((daten\/chat-bilder\/[\w.-]+)\)$/;
+function splitChat(body) {
+  const lines = (body || "").split("\n"), images = [];
+  const text = lines.filter(l => { const m = CHAT_IMG.exec(l.trim()); if (m) images.push(m[1]); return !m; }).join("\n").trim();
+  return { text, images };
+}
+const joinChat = (text, images) => [text, ...images.map(p => "![Bild](" + p + ")")].filter(Boolean).join("\n");
 const cleanTitle = (t) => (t || "").replace(/^\[[^\]]+\]\s*/, "");
 function areaOfQuestion(q) {
   const tag = (/^\[([^\]]+)\]/.exec(q.title) || [])[1];
@@ -227,11 +235,11 @@ function newItems(base) {
     const to = recipientOf(q);
     if (other(q.author, q.createdAt)) out.push({ id: "q" + q.id, at: q.createdAt, who: q.author, kind: to === me ? "Frage an dich" : "Neue Frage", text: cleanTitle(q.title), href: "fragen.html#q" + q.number });
     for (const c of q.comments.nodes) if (other(c.author, c.createdAt))
-      out.push({ id: "c" + c.id, at: c.createdAt, who: c.author, kind: "Antwort", text: c.body, sub: "auf: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
+      out.push({ id: "c" + c.id, at: c.createdAt, who: c.author, kind: "Antwort", text: splitChat(c.body).text || "Bild", sub: "auf: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
     if (q.closed && other(q.author, q.closedAt)) out.push({ id: "s" + q.id + q.closedAt, at: q.closedAt, who: q.author, kind: "Frage geklärt", text: cleanTitle(q.title), sub: "steht jetzt unter „Geklärte Fragen“", href: "fragen.html#q" + q.number });
   }
   for (const c of SK.data.chat) if (other(c.user, c.created_at))
-    out.push({ id: "m" + c.id, at: c.created_at, who: c.user, kind: "Chat", text: c.body, href: "chat.html" });
+    out.push({ id: "m" + c.id, at: c.created_at, who: c.user, kind: "Chat", text: splitChat(c.body).text || "Bild", href: "chat.html" });
   for (const c of SK.data.links) if (other(c.user, c.created_at))
     out.push({ id: "l" + c.id, at: c.created_at, who: c.user, kind: "Neuer Link", text: parseLink(c).title, href: "chat.html" });
   // Aufgabe weggenommen: nur für den, der zuständig war, und nur solange er sie nicht wiederbekommen hat (z. B. nach „Rückgängig“)
@@ -450,6 +458,72 @@ function taskRow(i, onOpen) {
         isFree(i) && i.state === "open" ? h("button", { class: "link", type: "button", onclick: () => act(async () => { await takeOver(i); await SK.refresh(); return () => giveBack(i); }, "Übernommen.") }, "Übernehmen") : null),
       note ? h("p", { class: "muted small", style: "margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere" }, note) : null),
     taskActions(i));
+}
+
+// ---------- Bilder (Chat und Fragen) ----------
+// Bilder liegen im privaten Repo, deshalb mit Token laden; einmal geladen bleiben sie im Speicher
+const imgCache = new Map();
+function chatImage(path, onLoad) {
+  const box = h("a", { class: "chat-img waiting", target: "_blank", rel: "noopener" });
+  if (!imgCache.has(path)) imgCache.set(path, fetch("https://api.github.com" + R + "/contents/" + path, {
+    headers: { Authorization: "Bearer " + SK.token, Accept: "application/vnd.github.raw+json", "X-GitHub-Api-Version": "2022-11-28" },
+  }).then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); }).then(b => URL.createObjectURL(b)));
+  imgCache.get(path).then(url => {
+    const img = h("img", { src: url, alt: "Hochgeladenes Bild", onload: () => { if (onLoad) onLoad(img); } });
+    box.href = url; box.classList.remove("waiting"); box.replaceChildren(img);
+  }).catch(() => { imgCache.delete(path); box.classList.remove("waiting"); box.replaceChildren(h("span", { class: "muted small" }, "Bild konnte nicht geladen werden.")); });
+  return box;
+}
+// Vor dem Hochladen verkleinern, damit Fotos vom Handy das Repo nicht aufblähen. GIFs bleiben, wie sie sind.
+const MAX_SIDE = 1600, MAX_GIF = 5 * 1024 * 1024;
+async function shrinkImage(file) {
+  if (file.type === "image/gif") {
+    if (file.size > MAX_GIF) throw new Error("Das GIF ist zu groß (höchstens 5 MB).");
+    return { blob: file, ext: "gif" };
+  }
+  const bmp = await createImageBitmap(file);
+  const f = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
+  const c = h("canvas", { width: Math.round(bmp.width * f), height: Math.round(bmp.height * f) }), g = c.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
+  return { blob: await new Promise(ok => c.toBlob(ok, "image/jpeg", 0.85)), ext: "jpg" };
+}
+const blobBase64 = (blob) => new Promise((ok, no) => {
+  const r = new FileReader(); r.onerror = () => no(r.error); r.onload = () => ok(String(r.result).split(",")[1]); r.readAsDataURL(blob);
+});
+async function uploadImage({ blob, ext }) {
+  const path = "daten/chat-bilder/" + Date.now() + "-" + Math.random().toString(36).slice(2, 8) + "." + ext;
+  await api(R + "/contents/" + path, { method: "PUT", body: { message: "Bild von " + SK.me.login, content: await blobBase64(blob) } });
+  return path;
+}
+// Bilder sammeln, die noch nicht gesendet sind: Knopf, Vorschau, Einfügen und Hineinziehen
+function imagePicker() {
+  let pending = [];
+  const box = h("div", { class: "chat-pending" });
+  const draw = () => box.replaceChildren(...pending.map(p => h("span", {}, h("img", { src: p.url, alt: "Bild zum Senden" }),
+    h("button", { class: "x", type: "button", title: "Bild entfernen", "aria-label": "Bild entfernen", onclick: () => {
+      URL.revokeObjectURL(p.url); pending = pending.filter(x => x !== p); draw();
+    } }, "×"))));
+  async function add(files) {
+    for (const f of files) {
+      if (!f.type.startsWith("image/")) continue;
+      try { const s = await shrinkImage(f); pending.push({ ...s, url: URL.createObjectURL(s.blob) }); }
+      catch (e) { status(e.message.includes("GIF") ? e.message : "Dieses Bild kann ich nicht lesen.", true); }
+    }
+    draw();
+  }
+  const file = h("input", { type: "file", accept: "image/*", multiple: true, hidden: true, onchange: (ev) => { add([...ev.target.files]); ev.target.value = ""; } });
+  const button = h("button", { class: "btn ghost", type: "button", onclick: () => file.click() }, "Bild anhängen");
+  return { box, button, file,
+    has: () => pending.length > 0,
+    watch(form) {
+      form.addEventListener("paste", (ev) => { const f = [...ev.clipboardData.files]; if (f.length) { ev.preventDefault(); add(f); } });
+      form.addEventListener("dragover", (ev) => ev.preventDefault());
+      form.addEventListener("drop", (ev) => { if (ev.dataTransfer.files.length) { ev.preventDefault(); add([...ev.dataTransfer.files]); } });
+    },
+    // schon hochgeladene merken: Scheitert das Senden danach, kommt ein Bild beim nächsten Versuch nicht doppelt ins Repo
+    async upload() { const out = []; for (const p of pending) out.push(p.path = p.path || await uploadImage(p)); return out; },
+    clear() { pending.forEach(p => URL.revokeObjectURL(p.url)); pending = []; draw(); },
+  };
 }
 
 // ---------- Aufgabe bearbeiten (Zeitplan und Meine Aufgaben) ----------
