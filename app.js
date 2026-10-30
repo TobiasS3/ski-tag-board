@@ -16,7 +16,8 @@ const CFG = {
 const AREAS = { hardware: "Hardware", netzwerk: "Netzwerk", wirtschaft: "Wirtschaft & Verkauf", app: "App", plan: "Plan" };
 const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen2"; // „2“: Stand einmal zurückgesetzt, damit die letzten 7 Tage als neu erscheinen
 const R = "/repos/" + CFG.owner + "/" + CFG.repo;
-const APP_VERSION = "1793288312"; // wird von bump.py gesetzt
+const APP_VERSION = "1793360426"; // wird von bump.py gesetzt
+const PUSH_KEY = "BDt9RkhaUrmGIJnyOg9suNNcrO5zHECtpFLbfVVyp8qQ6uzGEwVTHYhlB3SUzyqnHxOgY-tvPYC9PUWrwE3UEvQ", PUSH_DIR = "daten/push";
 
 // Läuft schon eine neuere Version online? Dann einmal frisch laden, damit nicht alte und neue Teile gemischt werden.
 async function checkVersion() {
@@ -154,9 +155,9 @@ async function loadQuestions() {
   const res = await gql(`query($o:String!,$r:String!){repository(owner:$o,name:$r){id
     discussionCategories(first:20){nodes{id name slug}}
     discussions(first:60,orderBy:{field:CREATED_AT,direction:DESC}){nodes{
-      id number title body url createdAt isAnswered closed closedAt category{slug}
+      id number title body url createdAt lastEditedAt isAnswered closed closedAt category{slug}
       author{login avatarUrl}
-      comments(first:40){nodes{id body createdAt isAnswer author{login avatarUrl}}}}}}}`, { o: CFG.owner, r: CFG.repo });
+      comments(first:40){nodes{id body createdAt lastEditedAt isAnswer author{login avatarUrl}}}}}}}`, { o: CFG.owner, r: CFG.repo });
   const repo = res.repository, d = SK.data;
   d.repoId = repo.id;
   d.qa = repo.discussionCategories.nodes.find(c => c.slug === "q-a") || null;
@@ -188,7 +189,7 @@ const isSettled = (q) => q.closed || q.isAnswered;
 function questionsToNotice() {
   const me = SK.me.login, base = seenOf("fragen");
   const byOther = (a, iso) => a && a.login !== me && newerThan(iso, base);
-  return SK.data.questions.filter(q => byOther(q.author, q.createdAt) || q.comments.nodes.some(c => byOther(c.author, c.createdAt)));
+  return SK.data.questions.filter(q => byOther(q.author, q.createdAt) || (q.closed && byOther(q.author, q.closedAt)) || q.comments.nodes.some(c => byOther(c.author, c.createdAt)));
 }
 // Alles, was andere seit „base“ geschrieben haben – für die Seite „Neu“ und ihr Licht im Menü
 function newItems(base) {
@@ -203,6 +204,7 @@ function newItems(base) {
     if (other(q.author, q.createdAt)) out.push({ id: "q" + q.id, at: q.createdAt, who: q.author, kind: to === me ? "Frage an dich" : "Neue Frage", text: cleanTitle(q.title), href: "fragen.html#q" + q.number });
     for (const c of q.comments.nodes) if (other(c.author, c.createdAt))
       out.push({ id: "c" + c.id, at: c.createdAt, who: c.author, kind: "Antwort", text: c.body, sub: "auf: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
+    if (q.closed && other(q.author, q.closedAt)) out.push({ id: "s" + q.id + q.closedAt, at: q.closedAt, who: q.author, kind: "Frage geklärt", text: cleanTitle(q.title), sub: "steht jetzt unter „Geklärte Fragen“", href: "fragen.html#q" + q.number });
   }
   // jede neue Aufgabe sehen alle; gelöschte sind in SK.data.issues nicht mehr drin und verschwinden damit auch hier
   for (const i of SK.data.issues) if (i.state === "open" && other(i.user, i.created_at)) {
@@ -287,10 +289,66 @@ async function answerQuestion(q, text) {
   return (await gql(`mutation($d:ID!,$b:String!){addDiscussionComment(input:{discussionId:$d,body:$b}){comment{id}}}`, { d: q.id, b: text })).addDiscussionComment.comment.id;
 }
 const deleteQuestion = (id) => gql(`mutation($i:ID!){deleteDiscussion(input:{id:$i}){clientMutationId}}`, { i: id });
+const editQuestion = (q, title) => gql(`mutation($i:ID!,$t:String!){updateDiscussion(input:{discussionId:$i,title:$t}){clientMutationId}}`, { i: q.id, t: title });
+const editAnswer = (id, text) => gql(`mutation($i:ID!,$b:String!){updateDiscussionComment(input:{commentId:$i,body:$b}){clientMutationId}}`, { i: id, b: text });
 const deleteAnswer = (id) => gql(`mutation($i:ID!){deleteDiscussionComment(input:{id:$i}){clientMutationId}}`, { i: id });
 async function settleQuestion(q, done) {
   if (done) await gql(`mutation($id:ID!){closeDiscussion(input:{discussionId:$id,reason:RESOLVED}){clientMutationId}}`, { id: q.id });
   else await gql(`mutation($id:ID!){reopenDiscussion(input:{discussionId:$id}){clientMutationId}}`, { id: q.id });
+}
+
+// ---------- Erinnerung um 17 Uhr ----------
+// Jedes Gerät legt sein Push-Abo im privaten Repo ab; der Workflow dort schickt daraus die Erinnerung.
+const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const isInstalled = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+async function pushFile(sub) {
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sub.endpoint));
+  const hex = [...new Uint8Array(hash)].slice(0, 8).map(b => b.toString(16).padStart(2, "0")).join("");
+  return PUSH_DIR + "/" + SK.me.login + "-" + hex + ".json";
+}
+async function pushSha(path) {
+  try { return (await api(R + "/contents/" + path, { allow404: true })).sha; }
+  catch (e) { if (e.status === 404) return null; throw e; }
+}
+async function savePush(sub) {
+  const path = await pushFile(sub);
+  if (await pushSha(path)) return;
+  await api(R + "/contents/" + path, { method: "PUT", body: { message: "Erinnerung: Gerät von " + SK.me.login + " angemeldet", content: b64enc(JSON.stringify(sub)) } });
+}
+async function pushOn() {
+  if (await Notification.requestPermission() !== "granted") throw new Error("Benachrichtigungen sind im Browser blockiert. Du kannst sie in den Einstellungen erlauben.");
+  const reg = await navigator.serviceWorker.register("sw.js");
+  await navigator.serviceWorker.ready;
+  const key = Uint8Array.from(atob(PUSH_KEY.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+  await savePush(await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
+  SK.push = "on";
+}
+async function pushOff() {
+  const reg = await navigator.serviceWorker.getRegistration();
+  const sub = reg && await reg.pushManager.getSubscription();
+  if (sub) {
+    const path = await pushFile(sub), sha = await pushSha(path);
+    if (sha) await api(R + "/contents/" + path, { method: "DELETE", body: { message: "Erinnerung: Gerät von " + SK.me.login + " abgemeldet", sha } });
+    await sub.unsubscribe();
+  }
+  SK.push = "off";
+}
+// Stand beim Start prüfen und einmal pro Sitzung sicherstellen, dass das Abo noch im Repo liegt
+async function pushCheck() {
+  SK.push = isIOS() && !isInstalled() ? "ios" : pushSupported() ? "off" : null;
+  if (SK.push !== "off") return;
+  const reg = await navigator.serviceWorker.getRegistration();
+  const sub = reg && await reg.pushManager.getSubscription();
+  if (!sub) return;
+  SK.push = "on";
+  try { if (!sessionStorage.getItem("skitag-push")) { await savePush(sub); sessionStorage.setItem("skitag-push", "1"); } } catch {}
+}
+function pushButton() {
+  if (!SK.push) return "";
+  if (SK.push === "ios") return h("button", { class: "link", type: "button", onclick: () => status("Am iPhone: unten auf „Teilen“ tippen, dann „Zum Home-Bildschirm“. Die App dort öffnen, neu anmelden und die Erinnerung einschalten.") }, "Erinnerung einschalten");
+  const on = SK.push === "on";
+  return h("button", { class: "link", type: "button", onclick: () => act(async () => { await (on ? pushOff() : pushOn()); renderUserbox(); }, on ? "Erinnerung ausgeschaltet." : "Erinnerung ist an: jeden Tag um 17 Uhr.") }, on ? "Erinnerung ausschalten" : "Erinnerung einschalten");
 }
 
 // ---------- gemeinsame Bausteine ----------
@@ -312,7 +370,7 @@ function renderTeam(box) {
       h("span", { class: "meta" }, `Woche: ${entries} Einträge · ${done} erledigt · ${openTasksOf(p.login).length} offen`));
   }));
 }
-// Abhaken und Ändern darf nur, wer zuständig ist. Aufgaben ohne Zuständigen kann man übernehmen.
+// Aufgaben darf jeder im Team abhaken und ändern, auch die von anderen. Aufgaben ohne Zuständigen kann man übernehmen.
 const isMine = (i) => (i.assignees || []).some(a => a.login === SK.me.login);
 const isFree = (i) => !(i.assignees || []).length;
 const ownerName = (i) => (i.assignees || []).map(a => firstName(a.login)).join(", ");
@@ -323,19 +381,18 @@ async function takeOver(i) {
 const restoreTask = (i) => api(R + "/issues/" + i.number, { method: "PATCH", body: { state: "open", assignees: [] } });
 const giveBack = (i) => api(R + "/issues/" + i.number, { method: "PATCH", body: { assignees: [] } });
 function tickBox(i) {
-  if (isMine(i)) return h("input", { type: "checkbox", id: "t-" + i.number, checked: i.state === "closed", "aria-label": "Erledigt: " + i.title,
+  return h("input", { type: "checkbox", id: "t-" + i.number, checked: i.state === "closed", "aria-label": "Erledigt: " + i.title,
     onchange: (ev) => { const on = ev.target.checked; act(async () => { await setTaskState(i, on); await SK.refresh(); return () => setTaskState(i, !on); }, on ? "Abgehakt." : "Wieder offen."); } });
-  return h("input", { type: "checkbox", checked: i.state === "closed", disabled: true, "aria-label": "Erledigt: " + i.title, title: isFree(i) ? "Erst übernehmen" : "Nur " + ownerName(i) + " kann das abhaken" });
 }
-// Eigene Aufgaben: abgeben oder löschen (mit Rückfrage). Beides lässt sich danach rückgängig machen.
+// Abgeben oder löschen (mit Rückfrage). Beides lässt sich danach rückgängig machen.
 function taskActions(i) {
   const box = h("div", { class: "task-actions" });
-  if (!isMine(i)) return box;
-  const was = i.state;
+  const was = i.state, owners = (i.assignees || []).map(a => a.login);
   const normal = () => box.replaceChildren(
-    i.state === "open" ? h("button", { class: "link", type: "button", onclick: () => act(async () => {
-      await giveBack(i); await SK.refresh(); return () => takeOver(i);
-    }, "Abgegeben. Jetzt kann sie jemand anders übernehmen.") }, "Abgeben") : "",
+    i.state === "open" && owners.length ? h("button", { class: "link", type: "button", onclick: () => act(async () => {
+      await giveBack(i); await SK.refresh();
+      return () => api(R + "/issues/" + i.number, { method: "PATCH", body: { assignees: owners } });
+    }, "Abgegeben. Jetzt kann sie jemand anders übernehmen.") }, isMine(i) ? "Abgeben" : "Von " + ownerName(i) + " wegnehmen") : "",
     h("button", { class: "link danger", type: "button", onclick: ask }, "Löschen"));
   const ask = () => box.replaceChildren(h("span", { class: "confirm-q" }, "Wirklich löschen?"),
     h("button", { class: "btn danger small", type: "button", onclick: () => act(async () => {
@@ -398,6 +455,7 @@ function renderUserbox() {
   const box = $("userbox"); if (!box || !SK.me) return;
   box.replaceChildren(h("img", { src: SK.me.avatar_url, alt: "" }), h("span", {}, firstName(SK.me.login)),
     h("button", { class: "link", type: "button", onclick: () => act(SK.refresh, "Aktualisiert.") }, "Aktualisieren"),
+    pushButton(),
     h("button", { class: "link", type: "button", onclick: () => logout() }, "Abmelden"));
   const badge = (id, n) => { const el = $(id); if (el) { el.textContent = n; el.hidden = !n; } };
   badge("nav-fragen", SK.page === "fragen" ? 0 : questionsToNotice().length);
@@ -431,6 +489,7 @@ async function boot() {
     if (!seen) seen = Number(load(key) || 0) || FIRST_VISIT();
     SK.prevSeen = seen;
     try { sessionStorage.setItem(key, String(seen)); } catch {}
+    await pushCheck().catch(() => {});
     await refresh();
     if (SK.page !== "neu") store(key, String(Date.now()));
     status("");

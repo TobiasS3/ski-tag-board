@@ -4,11 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ski Tag">
 <title>Zeitplan · Ski Tag Board</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=1793288312">
+<link rel="stylesheet" href="style.css?v=1793360426">
 </head>
 <body>
 <div class="wrap" id="wrap">
@@ -47,7 +51,7 @@
     </section>
   </main>
 </div>
-<script src="app.js?v=1793288312"></script>
+<script src="app.js?v=1793360426"></script>
 <script>
 let editing = null;
 const [R0, R1] = CFG.range;
@@ -94,8 +98,8 @@ function renderGantt() {
     const done = list.filter(i => i.state === "closed").length;
     parts.push(h("div", { class: "g-group" }, title, h("span", { class: "muted small", style: "font-family:var(--font-body);font-weight:500;margin-left:8px" }, done + " von " + list.length + " erledigt")));
     for (const i of [...list].sort((a, b) => ((taskRange(a) || {}).start || 9e15) - ((taskRange(b) || {}).start || 9e15))) {
-      const r = taskRange(i), area = areaOfIssue(i), isDone = i.state === "closed", canEdit = isMine(i) || isFree(i);
-      const open = () => canEdit ? openEditor(i) : status("Das ist die Aufgabe von " + ownerName(i) + ". Nur " + ownerName(i) + " kann sie ändern.");
+      const r = taskRange(i), area = areaOfIssue(i), isDone = i.state === "closed";
+      const open = () => openEditor(i);
       parts.push(h("div", { class: "g-label" + (isDone ? " done" : ""), onclick: open, title: i.title },
         h("span", { class: "t" }, (isDone ? "✓ " : "") + i.title),
         h("span", { class: "muted small" }, isFree(i) && !isDone
@@ -104,7 +108,7 @@ function renderGantt() {
       const track = h("div", { class: "g-track" }); decorate(track);
       if (r) {
         const l = pct(r.start), w = Math.max(1, pct(addDay(r.end, 1)) - l);
-        track.append(h("button", { type: "button", class: `g-bar a-${area}` + (isDone ? " done" : ""), style: `left:${l}%;width:${w}%;${canEdit ? "" : "cursor:default"}`,
+        track.append(h("button", { type: "button", class: `g-bar a-${area}` + (isDone ? " done" : ""), style: `left:${l}%;width:${w}%`,
           title: `${i.title}\n${r.start.toLocaleDateString("de-AT")} – ${r.end.toLocaleDateString("de-AT")}`, onclick: open }, i.title));
       }
       parts.push(track);
@@ -113,7 +117,7 @@ function renderGantt() {
   $("gantt").replaceChildren(...parts);
 }
 
-// ---------- Bearbeiten (nur eigene oder freie Aufgaben) ----------
+// ---------- Bearbeiten ----------
 function fillEditorSelects() {
   areaOptions($("ed-area"));
   peopleOptions($("ed-who"), "Niemand");
@@ -136,8 +140,8 @@ function openEditor(i) {
   $("ed-end").value = r ? r[2] : "";
   $("ed-state").value = i ? i.state : "open";
   $("ed-note").value = i ? (i.body || "").replace(RANGE_RE, "").trim() : "";
-  // bei eigenen Aufgaben: abgeben / löschen wie unter „Meine Aufgaben“
-  $("ed-extra").replaceChildren(i && isMine(i) ? taskActions(i) : "");
+  // abgeben / löschen wie unter „Meine Aufgaben“
+  $("ed-extra").replaceChildren(i ? taskActions(i) : "");
   $("editor").hidden = false;
   $("editor").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
   $("ed-title").focus({ preventScroll: true });
@@ -186,7 +190,7 @@ $("ed-cancel").addEventListener("click", () => { $("editor").hidden = true; edit
 $("new-task").addEventListener("click", () => openEditor(null));
 
 startPage("zeitplan", ["tasks"], async () => {
-  if (editing) { const now = SK.data.issues.find(x => x.number === editing.number); if (!now || !isMine(now)) { $("editor").hidden = true; editing = null; } }
+  if (editing) { const now = SK.data.issues.find(x => x.number === editing.number); if (!now) { $("editor").hidden = true; editing = null; } }
   renderGantt();
   if (!$("editor").hidden) { const keep = { area: $("ed-area").value, who: $("ed-who").value, month: $("ed-month").value }; fillEditorSelects(); $("ed-area").value = keep.area; $("ed-who").value = keep.who; $("ed-month").value = keep.month; }
 });

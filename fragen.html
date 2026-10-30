@@ -4,11 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ski Tag">
 <title>Fragen · Ski Tag Board</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=1793288312">
+<link rel="stylesheet" href="style.css?v=1793360426">
 </head>
 <body>
 <div class="wrap" id="wrap">
@@ -37,9 +41,25 @@
     </section>
   </main>
 </div>
-<script src="app.js?v=1793288312"></script>
+<script src="app.js?v=1793360426"></script>
 <script>
 const drafts = {}, opened = new Set();
+let editing = null; // welche Frage oder Antwort gerade bearbeitet wird
+
+function startEdit(id) { editing = id; delete drafts["e-" + id]; render(); }
+const editLink = (id) => h("button", { class: "link small", type: "button", onclick: () => startEdit(id) }, "bearbeiten");
+const editedMark = (iso) => iso ? h("span", { class: "muted", title: "zuletzt geändert am " + dateOf(iso) + " um " + timeOf(iso) }, "(geändert)") : null;
+// „save“ speichert den neuen Text und gibt zurück, wie man das wieder rückgängig macht
+function editForm(id, text, label, save) {
+  const ta = h("textarea", { id: "e-" + id, "aria-label": label });
+  ta.value = drafts[ta.id] ?? text;
+  return h("form", { class: "add", onsubmit: (ev) => {
+    ev.preventDefault(); const next = ta.value.trim(); if (!next) return;
+    act(async () => { const undo = await save(next); editing = null; await SK.refresh(); return undo; }, "Geändert.");
+  } }, ta, h("div", { class: "row" },
+    h("button", { class: "btn", type: "submit" }, "Speichern"),
+    h("button", { class: "btn ghost", type: "button", onclick: () => { editing = null; render(); } }, "Abbrechen")));
+}
 
 function questionRow(q) {
   const me = SK.me.login, to = recipientOf(q), settled = isSettled(q), body = bodyWithoutRecipient(q.body);
@@ -52,25 +72,43 @@ function questionRow(q) {
       h("div", {}, h("div", { class: "q-title" }, cleanTitle(q.title)),
         h("div", { class: "q-meta" }, firstName(q.author && q.author.login) + " → " + (to ? (to === me ? "dich" : firstName(to)) : "alle") + " · " + ago(q.createdAt) +
           " · " + (answers.length === 1 ? "1 Antwort" : answers.length + " Antworten"),
-          fresh && !settled ? h("span", { class: "pill new", style: "margin-left:8px" }, "neu") : null)),
+          fresh && !settled ? h("span", { class: "pill new", style: "margin-left:8px" }, "neu") : null,
+          q.closed && byOther(q.author, q.closedAt) ? h("span", { class: "pill new", style: "margin-left:8px" }, "gerade geklärt") : null)),
       h("span", { class: "arrow", "aria-hidden": "true" }, "›")));
   const inner = h("div", { class: "q-inner" });
+  // Geklärt, wieder öffnen und die Frage ändern darf nur, wer sie gestellt hat; alle anderen können nur antworten
+  const isAsker = !!q.author && q.author.login === me;
+  if (isAsker) inner.append(editing === q.id
+    ? editForm(q.id, cleanTitle(q.title), "Frage bearbeiten", async (next) => {
+        const before = q.title, tag = (/^\[[^\]]+\]\s*/.exec(before) || [""])[0];
+        await editQuestion(q, tag + next.replace(/\s+/g, " "));
+        return () => editQuestion(q, before);
+      })
+    : h("div", { class: "row small" }, h("button", { class: "link small", type: "button", onclick: () => startEdit(q.id) }, "Frage bearbeiten"), editedMark(q.lastEditedAt)));
   if (body && body !== "(keine Details)") inner.append(h("div", { class: "body muted" }, body));
-  for (const c of answers) inner.append(h("div", { class: "cmt" }, av(c.author), h("div", {},
-    h("div", { class: "row small" }, h("b", {}, firstName(c.author && c.author.login)), h("span", { class: "muted" }, ago(c.createdAt)),
-      byOther(c.author, c.createdAt) ? h("span", { class: "pill new" }, "neu") : null),
-    h("p", {}, c.body))));
+  for (const c of answers) {
+    const own = c.author && c.author.login === me;
+    inner.append(h("div", { class: "cmt" }, av(c.author), h("div", {},
+      h("div", { class: "row small" }, h("b", {}, firstName(c.author && c.author.login)), h("span", { class: "muted" }, ago(c.createdAt)),
+        editedMark(c.lastEditedAt),
+        byOther(c.author, c.createdAt) ? h("span", { class: "pill new" }, "neu") : null,
+        own && editing !== c.id ? editLink(c.id) : null),
+      own && editing === c.id
+        ? editForm(c.id, c.body, "Antwort bearbeiten", async (next) => { const before = c.body; await editAnswer(c.id, next); return () => editAnswer(c.id, before); })
+        : h("p", {}, c.body))));
+  }
   if (settled) {
-    inner.append(h("div", {}, h("button", { class: "link", type: "button", onclick: () => act(async () => { await settleQuestion(q, false); await SK.refresh(); return () => settleQuestion(q, true); }, "Wieder offen.") }, "wieder öffnen")));
+    if (isAsker) inner.append(h("div", {}, h("button", { class: "link", type: "button", onclick: () => act(async () => { await settleQuestion(q, false); await SK.refresh(); return () => settleQuestion(q, true); }, "Wieder offen.") }, "wieder öffnen")));
   } else {
     const ta = h("textarea", { id: "a-" + q.number, placeholder: "Antwort schreiben …", "aria-label": "Antwort" });
     ta.value = drafts[ta.id] || "";
     inner.append(h("form", { class: "add", onsubmit: (ev) => {
       ev.preventDefault(); const text = ta.value.trim(); if (!text) return;
-      act(async () => { const id = await answerQuestion(q, text); delete drafts[ta.id]; await SK.refresh(); return () => deleteAnswer(id); }, "Antwort gespeichert.");
+      // Feld leeren, bevor neu gezeichnet wird: render() merkt sich sonst den gesendeten Text wieder als Entwurf
+      act(async () => { const id = await answerQuestion(q, text); ta.value = ""; delete drafts[ta.id]; await SK.refresh(); return () => deleteAnswer(id); }, "Antwort gespeichert.");
     } }, ta, h("div", { class: "row" },
       h("button", { class: "btn", type: "submit" }, "Antworten"),
-      h("button", { class: "btn ghost", type: "button", onclick: () => act(async () => { await settleQuestion(q, true); delete drafts[ta.id]; opened.delete(q.number); await SK.refresh(); return () => settleQuestion(q, false); }, "Als geklärt markiert.") }, "✓ Geklärt"))));
+      isAsker ? h("button", { class: "btn ghost", type: "button", onclick: () => act(async () => { await settleQuestion(q, true); ta.value = ""; delete drafts[ta.id]; opened.delete(q.number); await SK.refresh(); return () => settleQuestion(q, false); }, "Als geklärt markiert.") }, "✓ Geklärt") : null)));
   }
   row.append(inner);
   return row;
