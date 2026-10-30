@@ -4,6 +4,8 @@ const CFG = {
   owner: "TobiasS3",
   repo: "ski-tag-plan",
   diary: 14,
+  chat: 41,
+  links: 42,
   planFile: "Ski Tag Plan.html",
   costFile: "daten/kosten.json",
   testDay: new Date(2027, 1, 1),
@@ -16,7 +18,7 @@ const CFG = {
 const AREAS = { hardware: "Hardware", netzwerk: "Netzwerk", wirtschaft: "Wirtschaft & Verkauf", app: "App", plan: "Plan" };
 const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen2"; // „2“: Stand einmal zurückgesetzt, damit die letzten 7 Tage als neu erscheinen
 const R = "/repos/" + CFG.owner + "/" + CFG.repo;
-const APP_VERSION = "1793360599"; // wird von bump.py gesetzt
+const APP_VERSION = "1793360986"; // wird von bump.py gesetzt
 const PUSH_KEY = "BDt9RkhaUrmGIJnyOg9suNNcrO5zHECtpFLbfVVyp8qQ6uzGEwVTHYhlB3SUzyqnHxOgY-tvPYC9PUWrwE3UEvQ", PUSH_DIR = "daten/push";
 
 // Läuft schon eine neuere Version online? Dann einmal frisch laden, damit nicht alte und neue Teile gemischt werden.
@@ -31,7 +33,7 @@ async function checkVersion() {
 
 const SK = {
   token: null, me: null,
-  data: { people: [], names: {}, milestones: [], issues: [], closers: {}, diary: [], questions: [], qa: null, repoId: null },
+  data: { people: [], names: {}, milestones: [], issues: [], closers: {}, diary: [], chat: [], links: [], questions: [], qa: null, repoId: null },
   prevSeen: 0,
 };
 
@@ -141,7 +143,7 @@ async function loadTasks() {
   const d = SK.data;
   const [ms, issues] = await Promise.all([all(R + "/milestones?state=all"), all(R + "/issues?state=all")]);
   d.milestones = ms.sort((a, b) => String(a.due_on).localeCompare(String(b.due_on)));
-  const real = issues.filter(i => !i.pull_request && i.number !== CFG.diary);
+  const real = issues.filter(i => !i.pull_request && ![CFG.diary, CFG.chat, CFG.links].includes(i.number));
   d.issues = real.filter(i => i.state_reason !== "not_planned");
   d.deleted = real.filter(i => i.state_reason === "not_planned");
   await Promise.all(d.issues.filter(i => i.state === "closed" && !d.closers[i.number]).map(async i => {
@@ -150,6 +152,12 @@ async function loadTasks() {
 }
 async function loadDiary() {
   SK.data.diary = (await all(R + "/issues/" + CFG.diary + "/comments")).sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+// Auf den anderen Seiten reichen die letzten 30 Tage für Lichter und „Neu“; die Chat-Seite lädt alles
+async function loadChat() {
+  const d = SK.data, since = SK.page === "chat" ? "" : "?since=" + new Date(Date.now() - 30 * 86400000).toISOString();
+  const [chat, links] = await Promise.all([all(R + "/issues/" + CFG.chat + "/comments" + since, 50), all(R + "/issues/" + CFG.links + "/comments")]);
+  d.chat = chat; d.links = links;
 }
 async function loadQuestions() {
   const res = await gql(`query($o:String!,$r:String!){repository(owner:$o,name:$r){id
@@ -170,6 +178,14 @@ function parseEntry(body) {
   if (!m) return { area: null, text: body || "" };
   const key = Object.keys(AREAS).find(k => AREAS[k].toLowerCase() === m[1].trim().toLowerCase());
   return { area: key || null, text: body.slice(m[0].length) };
+}
+// Link im Chat: erste Zeile Titel, zweite Zeile Adresse. Nur http(s), damit nichts anderes klickbar wird.
+function safeUrl(u) {
+  try { const x = new URL(/^[a-z][a-z0-9+.-]*:/i.test(u) ? u : "https://" + u); return /^https?:$/.test(x.protocol) ? x.href : null; } catch { return null; }
+}
+function parseLink(c) {
+  const [title, url] = (c.body || "").split("\n");
+  return { title: title || "", url: safeUrl((url || "").trim()) };
 }
 const cleanTitle = (t) => (t || "").replace(/^\[[^\]]+\]\s*/, "");
 function areaOfQuestion(q) {
@@ -206,6 +222,10 @@ function newItems(base) {
       out.push({ id: "c" + c.id, at: c.createdAt, who: c.author, kind: "Antwort", text: c.body, sub: "auf: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
     if (q.closed && other(q.author, q.closedAt)) out.push({ id: "s" + q.id + q.closedAt, at: q.closedAt, who: q.author, kind: "Frage geklärt", text: cleanTitle(q.title), sub: "steht jetzt unter „Geklärte Fragen“", href: "fragen.html#q" + q.number });
   }
+  for (const c of SK.data.chat) if (other(c.user, c.created_at))
+    out.push({ id: "m" + c.id, at: c.created_at, who: c.user, kind: "Chat", text: c.body, href: "chat.html" });
+  for (const c of SK.data.links) if (other(c.user, c.created_at))
+    out.push({ id: "l" + c.id, at: c.created_at, who: c.user, kind: "Neuer Link", text: parseLink(c).title, href: "chat.html" });
   // jede neue Aufgabe sehen alle; gelöschte sind in SK.data.issues nicht mehr drin und verschwinden damit auch hier
   for (const i of SK.data.issues) if (i.state === "open" && other(i.user, i.created_at)) {
     const kind = isMine(i) ? "Neue Aufgabe für dich" : isFree(i) ? "Neue Aufgabe, noch niemand zuständig" : "Neue Aufgabe für " + ownerName(i);
@@ -222,6 +242,7 @@ function setRead(id, on) {
   store(READ_KEY, JSON.stringify([...r].slice(-500)));
 }
 const newDiaryCount = () => SK.data.diary.filter(c => c.user && c.user.login !== SK.me.login && newerThan(c.created_at, seenOf("tagebuch"))).length;
+const newChatCount = () => SK.data.chat.filter(c => c.user && c.user.login !== SK.me.login && newerThan(c.created_at, seenOf("chat"))).length;
 const openQuestionsFor = (login) => SK.data.questions.filter(q => !isSettled(q) && recipientOf(q) === login);
 
 // Zeitraum einer Aufgabe: „Zeitraum: 2026-11-03 – 2026-11-20“ im Text, sonst der Monat des Milestones
@@ -420,7 +441,7 @@ function taskRow(i, onOpen) {
 }
 
 // ---------- Rahmen: Kopf, Menü, Anmeldung ----------
-const PAGES = [["neu.html", "neu", "Neu"], ["./", "aufgaben", "Meine Aufgaben"], ["tagebuch.html", "tagebuch", "Mein Tagebuch"], ["zeitplan.html", "zeitplan", "Zeitplan"], ["fragen.html", "fragen", "Fragen"], ["plan.html", "plan", "Businessplan"]];
+const PAGES = [["neu.html", "neu", "Neu"], ["chat.html", "chat", "Chat"], ["./", "aufgaben", "Meine Aufgaben"], ["tagebuch.html", "tagebuch", "Mein Tagebuch"], ["zeitplan.html", "zeitplan", "Zeitplan"], ["fragen.html", "fragen", "Fragen"], ["plan.html", "plan", "Businessplan"]];
 function shell(page) {
   const wrap = $("wrap"), main = $("main");
   const now = new Date(); now.setHours(0, 0, 0, 0);
@@ -431,7 +452,7 @@ function shell(page) {
     h("div", { class: "count" }, h("b", {}, days), h("span", {}, "Tage bis zur Präsentation bei KitzSki (Feb 2027)")));
   const nav = h("div", { class: "navbar" },
     h("nav", { class: "tabs" }, ...PAGES.map(([href, key, label]) =>
-      h("a", { href, "aria-current": key === page ? "page" : null }, label, ["neu", "fragen", "tagebuch"].includes(key) ? h("span", { class: "n", id: "nav-" + key, hidden: true }) : null))),
+      h("a", { href, "aria-current": key === page ? "page" : null }, label, ["neu", "chat", "fragen", "tagebuch"].includes(key) ? h("span", { class: "n", id: "nav-" + key, hidden: true }) : null))),
     h("div", { class: "userbox", id: "userbox" }));
   const login = h("section", { class: "panel login", id: "login", hidden: true },
     h("h2", {}, "Anmelden"),
@@ -461,6 +482,7 @@ function renderUserbox() {
   const badge = (id, n) => { const el = $(id); if (el) { el.textContent = n; el.hidden = !n; } };
   badge("nav-fragen", SK.page === "fragen" ? 0 : questionsToNotice().length);
   badge("nav-tagebuch", SK.page === "tagebuch" ? 0 : newDiaryCount());
+  badge("nav-chat", SK.page === "chat" ? 0 : newChatCount());
   badge("nav-neu", newItems(seenOf("neu")).length);
 }
 function logout(msg) {
@@ -471,7 +493,7 @@ function logout(msg) {
 
 let pageRender = null, pageNeeds = [];
 async function refresh() {
-  const jobs = { people: loadPeople, tasks: loadTasks, diary: loadDiary, questions: loadQuestions };
+  const jobs = { people: loadPeople, tasks: loadTasks, diary: loadDiary, chat: loadChat, questions: loadQuestions };
   await Promise.all(pageNeeds.filter(k => jobs[k]).map(k => jobs[k]()));
   renderUserbox();
   if (pageRender) await pageRender();
@@ -501,14 +523,15 @@ async function boot() {
 function startPage(page, needs, render) {
   checkVersion();
   SK.page = page;
-  pageNeeds = ["people", "questions", "diary", "tasks", ...needs];
+  pageNeeds = ["people", "questions", "diary", "chat", "tasks", ...needs];
   pageRender = render;
   shell(page);
   SK.token = load(TOKEN_KEY);
   if (SK.token) boot(); else { $("main").hidden = true; $("login").hidden = false; }
-  // Alle 30 Sekunden neu laden und sofort, wenn man zum Tab zurückkommt, damit man Änderungen der anderen gleich sieht
+  // Alle 30 Sekunden neu laden und sofort, wenn man zum Tab zurückkommt, damit man Änderungen der anderen gleich sieht.
+  // Felder mit data-live werden beim Neuzeichnen nicht ersetzt, da darf man auch während des Tippens aktualisieren.
   const auto = () => {
-    if (SK.token && SK.me && !busy && document.visibilityState === "visible" && !document.activeElement.matches("textarea, input[type=text], input[type=number], input[type=date], select"))
+    if (SK.token && SK.me && !busy && document.visibilityState === "visible" && (document.activeElement.matches("[data-live]") || !document.activeElement.matches("textarea, input[type=text], input[type=number], input[type=date], select")))
       refresh().catch(() => {});
   };
   setInterval(auto, 30000);

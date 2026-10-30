@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=1793360599">
+<link rel="stylesheet" href="style.css?v=1793360986">
 </head>
 <body>
 <div class="wrap" id="wrap">
@@ -36,7 +36,7 @@
           <button class="btn" type="submit">Speichern</button>
           <button class="btn ghost" type="button" id="ed-cancel">Abbrechen</button>
           <span id="ed-extra"></span>
-          <span class="muted small">Ohne Datum gilt die ganze Phase.</span>
+          <span class="muted small">Ohne „Von“ gilt ab heute. Ohne Datum gilt die ganze Phase.</span>
         </div>
       </form>
     </section>
@@ -51,7 +51,7 @@
     </section>
   </main>
 </div>
-<script src="app.js?v=1793360599"></script>
+<script src="app.js?v=1793360986"></script>
 <script>
 let editing = null;
 const [R0, R1] = CFG.range;
@@ -156,7 +156,8 @@ $("f-ed").addEventListener("submit", (ev) => {
   const title = $("ed-title").value.trim(); if (!title) return;
   let start = $("ed-start").value, end = $("ed-end").value;
   if (start && !end) end = start;
-  if (end && !start) start = end;
+  // nur „Bis“ eingegeben: gilt ab heute (liegt „Bis“ schon zurück, nur dieser eine Tag)
+  if (end && !start) start = ymd(new Date()) <= end ? ymd(new Date()) : end;
   if (start && end && end < start) [start, end] = [end, start];
   let body = $("ed-note").value.trim();
   if (start) body = setRangeInBody(body, start, end);

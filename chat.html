@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ski Tag">
+<title>Chat · Ski Tag Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css?v=1793360986">
+</head>
+<body>
+<div class="wrap" id="wrap">
+  <main id="main" hidden>
+    <section class="panel">
+      <h2>Chat</h2>
+      <details class="more" id="links-box">
+        <summary id="links-sum">Links</summary>
+        <div id="links"></div>
+        <form class="row" id="f-link">
+          <input type="text" id="l-title" data-live class="grow" placeholder="Name, z. B. Werkstattbuch" required aria-label="Name des Links">
+          <input type="text" inputmode="url" id="l-url" data-live class="grow" placeholder="https://…" required aria-label="Adresse des Links">
+          <button class="btn" type="submit">Link speichern</button>
+        </form>
+      </details>
+      <div class="chat-list" id="chat"></div>
+      <form class="add" id="f-chat">
+        <textarea id="c-text" data-live placeholder="Nachricht an alle …" required aria-label="Nachricht"></textarea>
+        <div class="row"><button class="btn" type="submit">Senden</button><span class="muted small">Enter sendet, Shift+Enter macht eine neue Zeile.</span></div>
+      </form>
+    </section>
+  </main>
+</div>
+<script src="app.js?v=1793360986"></script>
+<script>
+let editing = null, asking = null, editDraft = null, drawn = "";
+const comment = (id) => R + "/issues/comments/" + id;
+
+// Adressen im Text klickbar machen
+function withLinks(text) {
+  return text.split(/(https?:\/\/[^\s<>"]*[^\s<>".,;:!?)])/).map((part, n) => n % 2 && safeUrl(part)
+    ? h("a", { href: safeUrl(part), target: "_blank", rel: "noopener" }, part) : part);
+}
+function askDelete(id, label, onYes) {
+  return asking === id
+    ? h("span", { class: "del" }, h("span", { class: "confirm-q" }, "Wirklich löschen?"),
+        h("button", { class: "btn danger small", type: "button", onclick: onYes }, "Ja, löschen"),
+        h("button", { class: "btn ghost small", type: "button", onclick: () => { asking = null; render(); } }, "Nein"))
+    : h("span", { class: "del" }, h("button", { class: "x", type: "button", title: label, "aria-label": label, onclick: () => { asking = id; render(); } }, "×"));
+}
+function removeComment(c, issue, okText) {
+  act(async () => {
+    const body = c.body;
+    await api(comment(c.id), { method: "DELETE" }); asking = null; await SK.refresh();
+    return () => api(R + "/issues/" + issue + "/comments", { method: "POST", body: { body } });
+  }, okText);
+}
+function message(c) {
+  const own = c.user && c.user.login === SK.me.login;
+  const fresh = !own && isNew(c.created_at);
+  const changed = Date.parse(c.updated_at) - Date.parse(c.created_at) > 60000;
+  const top = h("div", { class: "top" }, h("b", {}, nameOf(c.user && c.user.login)), h("span", {}, timeOf(c.created_at)),
+    changed ? h("span", { class: "small", title: "zuletzt geändert am " + dateOf(c.updated_at) + " um " + timeOf(c.updated_at) }, "(geändert)") : null,
+    fresh ? h("span", { class: "pill new" }, "neu") : null,
+    own && editing !== c.id ? h("button", { class: "link", type: "button", onclick: () => { editing = c.id; editDraft = null; render(); } }, "bearbeiten") : null,
+    own && editing !== c.id ? askDelete(c.id, "Nachricht löschen", () => removeComment(c, CFG.chat, "Nachricht gelöscht.")) : null);
+  if (editing !== c.id) return h("div", { class: "item" + (fresh ? " is-new" : "") }, av(c.user), h("div", {}, top, h("p", {}, ...withLinks(c.body))));
+  const ta = h("textarea", { "aria-label": "Nachricht bearbeiten", oninput: (e) => { editDraft = e.target.value; } });
+  ta.value = editDraft ?? c.body;
+  return h("div", { class: "item" }, av(c.user), h("div", {}, top, h("form", { class: "add", style: "margin-top:6px", onsubmit: (ev) => {
+    ev.preventDefault(); const text = ta.value.trim(); if (!text) return;
+    act(async () => {
+      const before = c.body;
+      await api(comment(c.id), { method: "PATCH", body: { body: text } }); editing = null; editDraft = null; await SK.refresh();
+      return () => api(comment(c.id), { method: "PATCH", body: { body: before } });
+    }, "Nachricht geändert.");
+  } }, ta, h("div", { class: "row" },
+    h("button", { class: "btn", type: "submit" }, "Speichern"),
+    h("button", { class: "btn ghost", type: "button", onclick: () => { editing = null; editDraft = null; render(); } }, "Abbrechen")))));
+}
+function linkRow(c) {
+  const l = parseLink(c), own = c.user && c.user.login === SK.me.login;
+  return h("div", { class: "item" }, av(c.user), h("div", {}, h("div", { class: "top" },
+    l.url ? h("a", { href: l.url, target: "_blank", rel: "noopener" }, l.title) : h("span", {}, l.title),
+    h("span", { class: "small" }, firstName(c.user && c.user.login)),
+    own ? askDelete(c.id, "Link löschen", () => removeComment(c, CFG.links, "Link gelöscht.")) : null)));
+}
+// Nur neu zeichnen, wenn sich etwas geändert hat, sonst springt die Liste alle paar Sekunden
+function render(toBottom) {
+  const d = SK.data, sig = JSON.stringify([d.chat.map(c => [c.id, c.updated_at]), d.links.map(c => c.id), editing, asking]);
+  if (document.visibilityState === "visible") store(SEEN_KEY + "-chat", String(Date.now()));
+  if (sig === drawn) return;
+  const list = $("chat"), first = !drawn, atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  drawn = sig;
+  $("links-sum").textContent = "Links (" + d.links.length + ")";
+  $("links").replaceChildren(...(d.links.length ? d.links.map(linkRow) : [h("p", { class: "empty" }, "Noch keine Links.")]));
+  const byDay = new Map();
+  for (const c of d.chat) { const k = dayKey(c.created_at); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(c); }
+  const keep = list.scrollTop;
+  list.replaceChildren(...(d.chat.length ? [...byDay].flatMap(([k, cs]) => [h("div", { class: "day-h" }, dayLabel(k)), ...cs.map(message)]) : [h("p", { class: "empty" }, "Noch keine Nachrichten. Schreib die erste.")]));
+  list.scrollTop = first || toBottom || atEnd ? list.scrollHeight : keep;
+}
+
+function send() {
+  const text = $("c-text").value.trim(); if (!text) return;
+  act(async () => {
+    const c = await api(R + "/issues/" + CFG.chat + "/comments", { method: "POST", body: { body: text } });
+    $("c-text").value = ""; await SK.refresh(); render(true);
+    return () => api(comment(c.id), { method: "DELETE" });
+  }, "Gesendet.").then(() => $("c-text").focus());
+}
+$("f-chat").addEventListener("submit", (ev) => { ev.preventDefault(); send(); });
+$("c-text").addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); send(); } });
+$("f-link").addEventListener("submit", (ev) => {
+  ev.preventDefault(); const title = $("l-title").value.replace(/\s+/g, " ").trim(), url = safeUrl($("l-url").value.trim());
+  if (!title) return;
+  if (!url) return status("Das ist keine gültige Adresse.", true);
+  act(async () => {
+    const c = await api(R + "/issues/" + CFG.links + "/comments", { method: "POST", body: { body: title + "\n" + url } });
+    $("l-title").value = ""; $("l-url").value = ""; await SK.refresh();
+    return () => api(comment(c.id), { method: "DELETE" });
+  }, "Link gespeichert.");
+});
+
+startPage("chat", [], async () => render());
+// Im Chat öfter nachschauen als auf den anderen Seiten
+setInterval(() => {
+  if (SK.token && SK.me && !busy && document.visibilityState === "visible") loadChat().then(() => render()).catch(() => {});
+}, 5000);
+</script>
+</body>
+</html>
