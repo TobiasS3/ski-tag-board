@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=1793362657">
+<link rel="stylesheet" href="style.css?v=1793379434">
 </head>
 <body>
 <div class="wrap" id="wrap">
@@ -43,11 +43,24 @@
     </section>
   </main>
 </div>
-<script src="app.js?v=1793362657"></script>
+<script src="app.js?v=1793379434"></script>
 <script>
 const drafts = {}, opened = new Set(), pickers = {}; // Bilder pro Frage bleiben beim Neuzeichnen erhalten
 const askPick = imagePicker();
 let editing = null; // welche Frage oder Antwort gerade bearbeitet wird
+let asking = null; // bei welcher Antwort gerade „Wirklich löschen?“ offen ist
+
+// Eigene Antwort löschen: erst nachfragen, danach noch „Rückgängig“ (legt den Text neu an)
+function deleteAnswerButton(q, c) {
+  if (asking !== c.id) return h("button", { class: "link danger small", type: "button", onclick: () => { asking = c.id; render(); } }, "Löschen");
+  return h("span", { class: "row small" }, h("span", { class: "confirm-q" }, "Wirklich löschen?"),
+    h("button", { class: "btn danger small", type: "button", onclick: () => act(async () => {
+      const body = c.body;
+      await deleteAnswer(c.id); asking = null; await SK.refresh();
+      return () => answerQuestion(q, body);
+    }, "Antwort gelöscht.") }, "Ja, löschen"),
+    h("button", { class: "btn ghost small", type: "button", onclick: () => { asking = null; render(); } }, "Nein"));
+}
 
 function startEdit(id) { editing = id; delete drafts["e-" + id]; render(); }
 const editLink = (id) => h("button", { class: "link small", type: "button", onclick: () => startEdit(id) }, "bearbeiten");
@@ -97,7 +110,8 @@ function questionRow(q) {
       h("div", { class: "row small" }, h("b", {}, firstName(c.author && c.author.login)), h("span", { class: "muted" }, ago(c.createdAt)),
         editedMark(c.lastEditedAt),
         byOther(c.author, c.createdAt) ? h("span", { class: "pill new" }, "neu") : null,
-        own && editing !== c.id ? editLink(c.id) : null),
+        own && editing !== c.id ? editLink(c.id) : null,
+        own && editing !== c.id ? deleteAnswerButton(q, c) : null),
       own && editing === c.id
         ? editForm(c.id, answerText, "Antwort bearbeiten", async (next) => { const before = c.body; await editAnswer(c.id, joinChat(next, images)); return () => editAnswer(c.id, before); }, !!images.length)
         : answerText ? h("p", {}, answerText) : null, images.map(p => chatImage(p)))));
