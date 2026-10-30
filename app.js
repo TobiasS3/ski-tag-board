@@ -18,7 +18,7 @@ const CFG = {
 const AREAS = { hardware: "Hardware", netzwerk: "Netzwerk", wirtschaft: "Wirtschaft & Verkauf", app: "App", plan: "Plan" };
 const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen2"; // „2“: Stand einmal zurückgesetzt, damit die letzten 7 Tage als neu erscheinen
 const R = "/repos/" + CFG.owner + "/" + CFG.repo;
-const APP_VERSION = "1793361328"; // wird von bump.py gesetzt
+const APP_VERSION = "1793361533"; // wird von bump.py gesetzt
 const PUSH_KEY = "BDt9RkhaUrmGIJnyOg9suNNcrO5zHECtpFLbfVVyp8qQ6uzGEwVTHYhlB3SUzyqnHxOgY-tvPYC9PUWrwE3UEvQ", PUSH_DIR = "daten/push";
 
 // Läuft schon eine neuere Version online? Dann einmal frisch laden, damit nicht alte und neue Teile gemischt werden.
@@ -440,8 +440,8 @@ function taskRow(i, onOpen) {
   const closer = SK.data.closers[i.number], r = taskRange(i), note = (i.body || "").replace(RANGE_RE, "").trim();
   return h("div", { class: "task" + (i.state === "closed" ? " done" : "") },
     tickBox(i),
-    h("div", {},
-      h("span", { class: "t", role: onOpen ? "button" : null, tabindex: onOpen ? "0" : null, onclick: onOpen ? () => onOpen(i) : null,
+    h("div", { style: onOpen ? "cursor:pointer" : null, onclick: onOpen ? (e) => { if (!e.target.closest("button")) onOpen(i); } : null },
+      h("span", { class: "t", role: onOpen ? "button" : null, tabindex: onOpen ? "0" : null,
         onkeydown: onOpen ? (e) => { if (e.key === "Enter") onOpen(i); } : null }, i.title),
       h("div", { class: "sub" }, isNew(i.created_at) && i.user && i.user.login !== SK.me.login ? h("span", { class: "pill new" }, "neu") : null, chip(areaOfIssue(i)),
         (i.assignees || []).length ? h("span", { class: "who" }, ...i.assignees.map(a => h("img", { src: a.avatar_url, alt: nameOf(a.login), title: nameOf(a.login) }))) : h("span", {}, "niemand zuständig"),
@@ -450,6 +450,117 @@ function taskRow(i, onOpen) {
         isFree(i) && i.state === "open" ? h("button", { class: "link", type: "button", onclick: () => act(async () => { await takeOver(i); await SK.refresh(); return () => giveBack(i); }, "Übernommen.") }, "Übernehmen") : null),
       note ? h("p", { class: "muted small", style: "margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere" }, note) : null),
     taskActions(i));
+}
+
+// ---------- Aufgabe bearbeiten (Zeitplan und Meine Aufgaben) ----------
+let editTask = null, editorBack = 0;
+function closeEditor() {
+  $("editor").hidden = true; editTask = null;
+  scrollTo(0, editorBack);
+}
+function fillEditorSelects() {
+  areaOptions($("ed-area"));
+  peopleOptions($("ed-who"), "Niemand");
+  const ms = $("ed-month"), keep = ms.value;
+  ms.replaceChildren(h("option", { value: "auto" }, "Automatisch (nach „Bis“-Datum)"),
+    ...SK.data.milestones.map(m => h("option", { value: m.number }, m.title)));
+  ms.value = keep || "auto";
+}
+function openEditor(i) {
+  if ($("editor").hidden) editorBack = scrollY;
+  editTask = i || null;
+  status("");
+  fillEditorSelects();
+  const r = i ? RANGE_RE.exec(i.body || "") : null;
+  $("ed-head").textContent = i ? "Aufgabe ändern" : "Neue Aufgabe";
+  $("ed-title").value = i ? i.title : "";
+  $("ed-area").value = i ? areaOfIssue(i) : "plan";
+  $("ed-who").value = i && i.assignees && i.assignees[0] ? i.assignees[0].login : (i ? "" : SK.me.login);
+  $("ed-month").value = i && i.milestone ? String(i.milestone.number) : "auto";
+  $("ed-start").value = r ? r[1] : "";
+  $("ed-end").value = r ? r[2] : "";
+  $("ed-state").value = i ? i.state : "open";
+  $("ed-note").value = i ? (i.body || "").replace(RANGE_RE, "").trim() : "";
+  // abgeben / löschen wie unter „Meine Aufgaben“
+  $("ed-extra").replaceChildren(i ? taskActions(i) : "");
+  $("editor").hidden = false;
+  $("editor").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  $("ed-title").focus({ preventScroll: true });
+}
+function milestoneFor(dateStr) {
+  const [Y, M, D] = dateStr.split("-").map(Number), d = new Date(Y, M - 1, D);
+  const m = SK.data.milestones.find(m => { const [s, e] = msBounds(m); return d >= s && d <= e; });
+  return m ? m.number : null;
+}
+function mountEditor() {
+  $("main").insertAdjacentHTML("afterbegin", `<section class="panel editor" id="editor" hidden>
+  <h2 id="ed-head">Aufgabe</h2>
+  <form class="add" id="f-ed">
+    <input type="text" id="ed-title" placeholder="Was ist zu tun?" required aria-label="Titel">
+    <div class="row">
+      <label class="f">Zuständig<select id="ed-who"></select></label>
+      <label class="f">Bereich<select id="ed-area"></select></label>
+      <label class="f">Phase<select id="ed-month"></select></label>
+    </div>
+    <div class="row">
+      <label class="f">Von<input type="date" id="ed-start" min="2026-10-26" max="2028-02-29"></label>
+      <label class="f">Bis<input type="date" id="ed-end" min="2026-10-26" max="2028-02-29"></label>
+      <label class="f" style="flex:0 0 auto">Status<select id="ed-state"><option value="open">offen</option><option value="closed">erledigt</option></select></label>
+    </div>
+    <textarea id="ed-note" placeholder="Notiz (optional)" aria-label="Notiz"></textarea>
+    <div class="row">
+      <button class="btn" type="submit">Speichern</button>
+      <button class="btn ghost" type="button" id="ed-cancel">Abbrechen</button>
+      <span id="ed-extra"></span>
+      <span class="muted small">Ohne „Von“ gilt ab heute. Ohne Datum gilt die ganze Phase.</span>
+    </div>
+  </form>
+</section>`);
+  $("f-ed").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const title = $("ed-title").value.trim(); if (!title) return;
+    let start = $("ed-start").value, end = $("ed-end").value;
+    if (start && !end) end = start;
+    // nur „Bis“ eingegeben: gilt ab heute (liegt „Bis“ schon zurück, nur dieser eine Tag)
+    if (end && !start) start = ymd(new Date()) <= end ? ymd(new Date()) : end;
+    if (start && end && end < start) [start, end] = [end, start];
+    let body = $("ed-note").value.trim();
+    if (start) body = setRangeInBody(body, start, end);
+    const area = $("ed-area").value;
+    const otherLabels = editTask ? (editTask.labels || []).map(l => l.name).filter(n => !AREAS[n]) : [];
+    let ms = $("ed-month").value;
+    ms = ms === "auto" ? (end ? milestoneFor(end) : (editTask && editTask.milestone ? editTask.milestone.number : null)) : Number(ms);
+    const payload = { title, body, labels: [...otherLabels, area], assignees: $("ed-who").value ? [$("ed-who").value] : [], milestone: ms };
+    const wasNew = !editTask;
+    const old = editTask;
+    act(async () => {
+      let undo;
+      if (old) {
+        if ($("ed-state").value !== old.state) payload.state = $("ed-state").value;
+        await api(R + "/issues/" + old.number, { method: "PATCH", body: payload });
+        delete SK.data.closers[old.number];
+        const before = { title: old.title, body: old.body || "", labels: (old.labels || []).map(l => l.name), assignees: (old.assignees || []).map(a => a.login),
+          milestone: old.milestone ? old.milestone.number : null, state: old.state };
+        undo = () => api(R + "/issues/" + old.number, { method: "PATCH", body: before });
+      } else {
+        const created = await api(R + "/issues", { method: "POST", body: payload });
+        if ($("ed-state").value === "closed") await api(R + "/issues/" + created.number, { method: "PATCH", body: { state: "closed" } });
+        undo = () => dropTask(created.number);
+      }
+      closeEditor();
+      await SK.refresh();
+      return undo;
+    }, wasNew ? "Aufgabe angelegt." : "Gespeichert.");
+  });
+  $("ed-cancel").addEventListener("click", closeEditor);
+}
+// nach dem Neuladen: gelöschte Aufgabe schließt das Fenster, Auswahllisten bleiben aktuell
+function refreshEditor() {
+  if (editTask && !SK.data.issues.some(x => x.number === editTask.number)) closeEditor();
+  if ($("editor").hidden) return;
+  const keep = { area: $("ed-area").value, who: $("ed-who").value, month: $("ed-month").value };
+  fillEditorSelects();
+  $("ed-area").value = keep.area; $("ed-who").value = keep.who; $("ed-month").value = keep.month;
 }
 
 // ---------- Rahmen: Kopf, Menü, Anmeldung ----------

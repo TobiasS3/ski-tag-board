@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=1793361328">
+<link rel="stylesheet" href="style.css?v=1793361533">
 </head>
 <body>
 <div class="wrap" id="wrap">
@@ -61,7 +61,7 @@
     </section>
   </main>
 </div>
-<script src="app.js?v=1793361328"></script>
+<script src="app.js?v=1793361533"></script>
 <script>
 const byEnd = (a, b) => ((taskRange(a) || {}).end || 9e15) - ((taskRange(b) || {}).end || 9e15);
 
@@ -70,20 +70,21 @@ function render() {
   const open = is.filter(i => i.state === "open"), done = is.filter(i => i.state === "closed" && isMine(i));
   const mine = open.filter(isMine).sort(byEnd);
   $("mine-count").textContent = mine.length ? mine.length + " offen" : "";
-  $("mine").replaceChildren(...(mine.length ? mine.map(i => taskRow(i)) : [h("p", { class: "empty" }, "Du hast gerade keine offenen Aufgaben.")]));
+  $("mine").replaceChildren(...(mine.length ? mine.map(i => taskRow(i, openEditor)) : [h("p", { class: "empty" }, "Du hast gerade keine offenen Aufgaben.")]));
 
   renderOthers();
   renderDeleted();
 
   $("done-box").hidden = !done.length;
   $("done-sum").textContent = "Erledigt (" + done.length + ")";
-  $("done").replaceChildren(...done.sort((a, b) => String(b.closed_at).localeCompare(String(a.closed_at))).map(i => taskRow(i)));
+  $("done").replaceChildren(...done.sort((a, b) => String(b.closed_at).localeCompare(String(a.closed_at))).map(i => taskRow(i, openEditor)));
 
   peopleOptions($("t-who"), "Niemand");
   if (!$("t-who").dataset.init) { $("t-who").value = me; $("t-who").dataset.init = "1"; }
   const ph = $("t-phase"), keep = ph.value;
   ph.replaceChildren(...SK.data.milestones.map(m => h("option", { value: m.number }, m.title)));
   if (keep) ph.value = keep;
+  refreshEditor();
 }
 
 function renderOthers() {
@@ -104,11 +105,11 @@ function renderOthers() {
   if (!who.value) {
     for (const p of SK.data.people.filter(p => p.login !== me)) {
       const l = list.filter(i => (i.assignees || []).some(a => a.login === p.login));
-      if (l.length) parts.push(h("h3", {}, nameOf(p.login)), h("div", {}, ...l.map(i => taskRow(i))));
+      if (l.length) parts.push(h("h3", {}, nameOf(p.login)), h("div", {}, ...l.map(i => taskRow(i, openEditor))));
     }
     const f = list.filter(isFree);
-    if (f.length) parts.push(h("h3", {}, "Noch niemand zuständig"), h("div", {}, ...f.map(i => taskRow(i))));
-  } else parts.push(...list.map(i => taskRow(i)));
+    if (f.length) parts.push(h("h3", {}, "Noch niemand zuständig"), h("div", {}, ...f.map(i => taskRow(i, openEditor))));
+  } else parts.push(...list.map(i => taskRow(i, openEditor)));
   $("others").replaceChildren(...(parts.length ? parts : [h("p", { class: "empty" }, "Keine Aufgaben für diese Auswahl.")]));
 }
 
@@ -124,6 +125,7 @@ function renderDeleted() {
     }, "Wiederhergestellt. Steht jetzt bei „Noch niemand zuständig“.") }, "Wiederherstellen"))));
 }
 
+mountEditor();
 $("f-who").addEventListener("change", renderOthers);
 $("f-state").addEventListener("change", renderOthers);
 
