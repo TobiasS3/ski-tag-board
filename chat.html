@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=1793362528">
+<link rel="stylesheet" href="style.css?v=1793362657">
 </head>
 <body>
 <div class="wrap" id="wrap">
@@ -32,14 +32,9 @@
         <select id="c-days" data-live class="grow" aria-label="Zeitraum">
           <option value="1">Heute</option>
           <option value="7">Letzte 7 Tage</option>
-          <option value="30">Letzte 30 Tage</option>
+          <option value="30">Letzter Monat</option>
+          <option value="90">Letzte 3 Monate</option>
           <option value="0">Alle Tage</option>
-        </select>
-        <select id="c-count" data-live class="grow" aria-label="Wie viele Nachrichten">
-          <option value="20">Höchstens 20 Nachrichten</option>
-          <option value="50">Höchstens 50 Nachrichten</option>
-          <option value="100">Höchstens 100 Nachrichten</option>
-          <option value="0">Alle Nachrichten</option>
         </select>
         <span class="muted small" id="c-shown"></span>
       </div>
@@ -56,7 +51,7 @@
     </section>
   </main>
 </div>
-<script src="app.js?v=1793362528"></script>
+<script src="app.js?v=1793362657"></script>
 <script>
 let editing = null, asking = null, editDraft = null, drawn = "";
 const comment = (id) => R + "/issues/comments/" + id;
@@ -118,10 +113,9 @@ function linkRow(c) {
 }
 // Nur neu zeichnen, wenn sich etwas geändert hat, sonst springt die Liste alle paar Sekunden
 function visibleChat() {
-  const days = Number($("c-days").value), count = Number($("c-count").value);
+  const days = Number($("c-days").value);
   const from = new Date(); from.setHours(0, 0, 0, 0); from.setDate(from.getDate() - days + 1);
-  const list = days ? SK.data.chat.filter(c => Date.parse(c.created_at) >= from) : SK.data.chat;
-  return count ? list.slice(-count) : list; // die neuesten, unten im Chat
+  return days ? SK.data.chat.filter(c => Date.parse(c.created_at) >= from) : SK.data.chat;
 }
 function render(toBottom) {
   const d = SK.data, shown = visibleChat();
@@ -152,10 +146,8 @@ function send() {
 $("f-chat").addEventListener("submit", (ev) => { ev.preventDefault(); send(); });
 $("c-text").addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); send(); } });
 // Einstellung merken (nur in diesem Browser)
-for (const [id, key, standard] of [["c-days", "skitag-chat-days", "7"], ["c-count", "skitag-chat-count", "50"]]) {
-  $(id).value = load(key) || standard;
-  $(id).addEventListener("change", (ev) => { store(key, ev.target.value); if (SK.me) render(true); });
-}
+$("c-days").value = load("skitag-chat-days") || "7";
+$("c-days").addEventListener("change", (ev) => { store("skitag-chat-days", ev.target.value); if (SK.me) render(true); });
 const pick = imagePicker();
 $("c-pending").replaceWith(pick.box); $("c-pick").replaceWith(pick.button, pick.file); pick.watch($("f-chat"));
 $("f-link").addEventListener("submit", (ev) => {
