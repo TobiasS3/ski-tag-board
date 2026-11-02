@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=1793379434">
+<link rel="stylesheet" href="style.css?v=1793623807">
 </head>
 <body>
 <div class="wrap" id="wrap">
@@ -43,11 +43,12 @@
     </section>
   </main>
 </div>
-<script src="app.js?v=1793379434"></script>
+<script src="app.js?v=1793623807"></script>
 <script>
-const drafts = {}, opened = new Set(), pickers = {}; // Bilder pro Frage bleiben beim Neuzeichnen erhalten
-const askPick = imagePicker();
+const drafts = {}, opened = new Set(), pickers = {}, linkPickers = {}; // Bilder und Links pro Frage bleiben beim Neuzeichnen erhalten
+const askPick = imagePicker(), askLinks = linkPicker();
 let editing = null; // welche Frage oder Antwort gerade bearbeitet wird
+let editLinks = null; // die Links der gerade bearbeiteten Frage oder Antwort
 let asking = null; // bei welcher Antwort gerade „Wirklich löschen?“ offen ist
 
 // Eigene Antwort löschen: erst nachfragen, danach noch „Rückgängig“ (legt den Text neu an)
@@ -62,18 +63,21 @@ function deleteAnswerButton(q, c) {
     h("button", { class: "btn ghost small", type: "button", onclick: () => { asking = null; render(); } }, "Nein"));
 }
 
-function startEdit(id) { editing = id; delete drafts["e-" + id]; render(); }
+function startEdit(id) { editing = id; editLinks = null; delete drafts["e-" + id]; render(); }
 const editLink = (id) => h("button", { class: "link small", type: "button", onclick: () => startEdit(id) }, "bearbeiten");
 const editedMark = (iso) => iso ? h("span", { class: "muted", title: "zuletzt geändert am " + dateOf(iso) + " um " + timeOf(iso) }, "(geändert)") : null;
-// „save“ speichert den neuen Text und gibt zurück, wie man das wieder rückgängig macht
-function editForm(id, text, label, save, mayBeEmpty) {
+// „save“ speichert den neuen Text samt Links und gibt zurück, wie man das wieder rückgängig macht
+function editForm(id, text, links, label, save, mayBeEmpty) {
   const ta = h("textarea", { id: "e-" + id, "aria-label": label });
   ta.value = drafts[ta.id] ?? text;
+  const pick = editLinks = editLinks || linkPicker(links);
   return h("form", { class: "add", onsubmit: (ev) => {
-    ev.preventDefault(); const next = ta.value.trim(); if (!next && !mayBeEmpty) return;
-    act(async () => { const undo = await save(next); editing = null; await SK.refresh(); return undo; }, "Geändert.");
-  } }, ta, h("div", { class: "row" },
+    ev.preventDefault(); const next = ta.value.trim(), chosen = pick.take(); if (!chosen) return;
+    if (!next && !(mayBeEmpty && mayBeEmpty(chosen))) return;
+    act(async () => { const undo = await save(next, chosen); editing = null; await SK.refresh(); return undo; }, "Geändert.");
+  } }, ta, pick.box, h("div", { class: "row" },
     h("button", { class: "btn", type: "submit" }, "Speichern"),
+    pick.button,
     h("button", { class: "btn ghost", type: "button", onclick: () => { editing = null; render(); } }, "Abbrechen")));
 }
 
@@ -94,18 +98,22 @@ function questionRow(q) {
   const inner = h("div", { class: "q-inner" });
   // Geklärt, wieder öffnen und die Frage ändern darf nur, wer sie gestellt hat; alle anderen können nur antworten
   const isAsker = !!q.author && q.author.login === me;
+  const { text: bodyRest, images: bodyImages } = splitChat(body);
+  const { text: bodyText, links: bodyLinks } = splitLinks(bodyRest);
   if (isAsker) inner.append(editing === q.id
-    ? editForm(q.id, cleanTitle(q.title), "Frage bearbeiten", async (next) => {
-        const before = q.title, tag = (/^\[[^\]]+\]\s*/.exec(before) || [""])[0];
-        await editQuestion(q, tag + next.replace(/\s+/g, " "));
-        return () => editQuestion(q, before);
+    ? editForm(q.id, cleanTitle(q.title), bodyLinks, "Frage bearbeiten", async (next, links) => {
+        const beforeTitle = q.title, beforeBody = q.body, tag = (/^\[[^\]]+\]\s*/.exec(beforeTitle) || [""])[0];
+        const head = (/^An:.*$/m.exec(beforeBody || "") || ["An: alle"])[0];
+        await editQuestion(q, tag + next.replace(/\s+/g, " "), head + "\n\n" + joinLinks(joinChat(bodyText, bodyImages), links));
+        return () => editQuestion(q, beforeTitle, beforeBody);
       })
     : h("div", { class: "row small" }, h("button", { class: "link small", type: "button", onclick: () => startEdit(q.id) }, "Frage bearbeiten"), editedMark(q.lastEditedAt)));
-  const { text: bodyText, images: bodyImages } = splitChat(body);
   if (bodyText && bodyText !== "(keine Details)") inner.append(h("div", { class: "body muted" }, bodyText));
+  if (editing !== q.id) for (const u of bodyLinks) inner.append(attachedLink(u));
   for (const p of bodyImages) inner.append(chatImage(p));
   for (const c of answers) {
-    const own = c.author && c.author.login === me, { text: answerText, images } = splitChat(c.body);
+    const own = c.author && c.author.login === me, { text: answerRest, images } = splitChat(c.body);
+    const { text: answerText, links: answerLinks } = splitLinks(answerRest);
     inner.append(h("div", { class: "cmt" }, av(c.author), h("div", {},
       h("div", { class: "row small" }, h("b", {}, firstName(c.author && c.author.login)), h("span", { class: "muted" }, ago(c.createdAt)),
         editedMark(c.lastEditedAt),
@@ -113,22 +121,24 @@ function questionRow(q) {
         own && editing !== c.id ? editLink(c.id) : null,
         own && editing !== c.id ? deleteAnswerButton(q, c) : null),
       own && editing === c.id
-        ? editForm(c.id, answerText, "Antwort bearbeiten", async (next) => { const before = c.body; await editAnswer(c.id, joinChat(next, images)); return () => editAnswer(c.id, before); }, !!images.length)
-        : answerText ? h("p", {}, answerText) : null, images.map(p => chatImage(p)))));
+        ? editForm(c.id, answerText, answerLinks, "Antwort bearbeiten", async (next, links) => { const before = c.body; await editAnswer(c.id, joinLinks(joinChat(next, images), links)); return () => editAnswer(c.id, before); }, (links) => images.length || links.length)
+        : answerText ? h("p", {}, answerText) : null,
+      own && editing === c.id ? null : answerLinks.map(u => attachedLink(u)), images.map(p => chatImage(p)))));
   }
   if (settled) {
     if (isAsker) inner.append(h("div", {}, h("button", { class: "link", type: "button", onclick: () => act(async () => { await settleQuestion(q, false); await SK.refresh(); return () => settleQuestion(q, true); }, "Wieder offen.") }, "wieder öffnen")));
   } else {
     const ta = h("textarea", { id: "a-" + q.number, placeholder: "Antwort schreiben …", "aria-label": "Antwort" });
     const pick = pickers[q.number] = pickers[q.number] || imagePicker();
+    const linkPick = linkPickers[q.number] = linkPickers[q.number] || linkPicker();
     ta.value = drafts[ta.id] || "";
     const answerForm = h("form", { class: "add", onsubmit: (ev) => {
-      ev.preventDefault(); const text = ta.value.trim(); if (!text && !pick.has()) return;
+      ev.preventDefault(); const text = ta.value.trim(), links = linkPick.take(); if (!links) return; if (!text && !pick.has() && !links.length) return;
       // Feld leeren, bevor neu gezeichnet wird: render() merkt sich sonst den gesendeten Text wieder als Entwurf
-      act(async () => { const id = await answerQuestion(q, joinChat(text, await pick.upload())); ta.value = ""; delete drafts[ta.id]; pick.clear(); await SK.refresh(); return () => deleteAnswer(id); }, "Antwort gespeichert.");
-    } }, pick.box, ta, h("div", { class: "row" },
+      act(async () => { const id = await answerQuestion(q, joinLinks(joinChat(text, await pick.upload()), links)); ta.value = ""; delete drafts[ta.id]; pick.clear(); linkPick.clear(); await SK.refresh(); return () => deleteAnswer(id); }, "Antwort gespeichert.");
+    } }, pick.box, ta, linkPick.box, h("div", { class: "row" },
       h("button", { class: "btn", type: "submit" }, "Antworten"),
-      pick.button, pick.file,
+      pick.button, pick.file, linkPick.button,
       isAsker ? h("button", { class: "btn ghost", type: "button", onclick: () => act(async () => { await settleQuestion(q, true); ta.value = ""; delete drafts[ta.id]; opened.delete(q.number); await SK.refresh(); return () => settleQuestion(q, false); }, "Als geklärt markiert.") }, "✓ Geklärt") : null));
     pick.watch(answerForm);
     inner.append(answerForm);
@@ -156,10 +166,10 @@ function render() {
   }
 }
 
-$("q-row").append(askPick.button, askPick.file); $("f-q").prepend(askPick.box); askPick.watch($("f-q"));
+$("q-row").append(askPick.button, askPick.file, askLinks.button); $("f-q").prepend(askPick.box); $("f-q").append(askLinks.box); askPick.watch($("f-q"));
 $("f-q").addEventListener("submit", (ev) => {
-  ev.preventDefault(); const t = $("q-title").value.trim(); if (!t) return;
-  act(async () => { const id = await askQuestion(null, $("q-to").value, t, joinChat("", await askPick.upload())); $("q-title").value = ""; askPick.clear(); await SK.refresh(); return () => deleteQuestion(id); }, "Frage gestellt.");
+  ev.preventDefault(); const t = $("q-title").value.trim(), links = askLinks.take(); if (!t || !links) return;
+  act(async () => { const id = await askQuestion(null, $("q-to").value, t, joinLinks(joinChat("", await askPick.upload()), links)); $("q-title").value = ""; askPick.clear(); askLinks.clear(); await SK.refresh(); return () => deleteQuestion(id); }, "Frage gestellt.");
 });
 
 startPage("fragen", [], async () => {

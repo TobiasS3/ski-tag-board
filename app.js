@@ -18,7 +18,7 @@ const CFG = {
 const AREAS = { hardware: "Hardware", netzwerk: "Netzwerk", wirtschaft: "Wirtschaft & Verkauf", app: "App", plan: "Plan" };
 const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen2"; // „2“: Stand einmal zurückgesetzt, damit die letzten 7 Tage als neu erscheinen
 const R = "/repos/" + CFG.owner + "/" + CFG.repo;
-const APP_VERSION = "1793379434"; // wird von bump.py gesetzt
+const APP_VERSION = "1793623807"; // wird von bump.py gesetzt
 const PUSH_KEY = "BDt9RkhaUrmGIJnyOg9suNNcrO5zHECtpFLbfVVyp8qQ6uzGEwVTHYhlB3SUzyqnHxOgY-tvPYC9PUWrwE3UEvQ", PUSH_DIR = "daten/push";
 
 // Läuft schon eine neuere Version online? Dann einmal frisch laden, damit nicht alte und neue Teile gemischt werden.
@@ -203,6 +203,15 @@ function splitChat(body) {
   return { text, images };
 }
 const joinChat = (text, images) => [text, ...images.map(p => "![Bild](" + p + ")")].filter(Boolean).join("\n");
+// Links bei Fragen und Antworten stehen als eigene Zeile „[Link](https://…)“ im Text
+const ATTACHED_LINK = /^\[Link\]\((https?:\/\/\S+)\)$/;
+function splitLinks(body) {
+  const links = [];
+  const text = (body || "").split("\n").filter(l => { const m = ATTACHED_LINK.exec(l.trim()); if (m) links.push(m[1]); return !m; }).join("\n").trim();
+  return { text, links };
+}
+const joinLinks = (text, links) => [text, ...links.map(u => "[Link](" + u + ")")].filter(Boolean).join("\n");
+const linkLabel = (url) => url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
 const cleanTitle = (t) => (t || "").replace(/^\[[^\]]+\]\s*/, "");
 function areaOfQuestion(q) {
   const tag = (/^\[([^\]]+)\]/.exec(q.title) || [])[1];
@@ -234,8 +243,10 @@ function newItems(base) {
   for (const q of SK.data.questions) {
     const to = recipientOf(q);
     if (other(q.author, q.createdAt)) out.push({ id: "q" + q.id, at: q.createdAt, who: q.author, kind: to === me ? "Frage an dich" : "Neue Frage", text: cleanTitle(q.title), href: "fragen.html#q" + q.number });
-    for (const c of q.comments.nodes) if (other(c.author, c.createdAt))
-      out.push({ id: "c" + c.id, at: c.createdAt, who: c.author, kind: "Antwort", text: splitChat(c.body).text || "Bild", sub: "auf: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
+    for (const c of q.comments.nodes) if (other(c.author, c.createdAt)) {
+      const { text, links } = splitLinks(splitChat(c.body).text);
+      out.push({ id: "c" + c.id, at: c.createdAt, who: c.author, kind: "Antwort", text: text || (links[0] && linkLabel(links[0])) || "Bild", sub: "auf: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
+    }
     if (q.closed && other(q.author, q.closedAt)) out.push({ id: "s" + q.id + q.closedAt, at: q.closedAt, who: q.author, kind: "Frage geklärt", text: cleanTitle(q.title), sub: "steht jetzt unter „Geklärte Fragen“", href: "fragen.html#q" + q.number });
   }
   for (const c of SK.data.chat) if (other(c.user, c.created_at))
@@ -330,7 +341,7 @@ async function answerQuestion(q, text) {
   return (await gql(`mutation($d:ID!,$b:String!){addDiscussionComment(input:{discussionId:$d,body:$b}){comment{id}}}`, { d: q.id, b: text })).addDiscussionComment.comment.id;
 }
 const deleteQuestion = (id) => gql(`mutation($i:ID!){deleteDiscussion(input:{id:$i}){clientMutationId}}`, { i: id });
-const editQuestion = (q, title) => gql(`mutation($i:ID!,$t:String!){updateDiscussion(input:{discussionId:$i,title:$t}){clientMutationId}}`, { i: q.id, t: title });
+const editQuestion = (q, title, body) => gql(`mutation($i:ID!,$t:String!,$b:String!){updateDiscussion(input:{discussionId:$i,title:$t,body:$b}){clientMutationId}}`, { i: q.id, t: title, b: body });
 const editAnswer = (id, text) => gql(`mutation($i:ID!,$b:String!){updateDiscussionComment(input:{commentId:$i,body:$b}){clientMutationId}}`, { i: id, b: text });
 const deleteAnswer = (id) => gql(`mutation($i:ID!){deleteDiscussionComment(input:{id:$i}){clientMutationId}}`, { i: id });
 async function settleQuestion(q, done) {
@@ -523,6 +534,47 @@ function imagePicker() {
     // schon hochgeladene merken: Scheitert das Senden danach, kommt ein Bild beim nächsten Versuch nicht doppelt ins Repo
     async upload() { const out = []; for (const p of pending) out.push(p.path = p.path || await uploadImage(p)); return out; },
     clear() { pending.forEach(p => URL.revokeObjectURL(p.url)); pending = []; draw(); },
+  };
+}
+
+// ---------- Links anfügen (Fragen und Antworten) ----------
+const attachedLink = (url) => h("a", { class: "att-link", href: url, target: "_blank", rel: "noopener", title: url }, linkLabel(url));
+// Prüft die Eingabe: „ski-tag.de“ wird zu „https://ski-tag.de/“, ein Name ohne Punkt gilt nicht als Adresse
+function linkFromInput(value) {
+  const url = safeUrl(value.trim());
+  return url && new URL(url).hostname.includes(".") ? url : null;
+}
+function linkPicker(initial = []) {
+  let pending = [...initial], shownError = false;
+  const list = h("div", { class: "link-pending" });
+  const input = h("input", { type: "text", inputmode: "url", autocapitalize: "off", autocomplete: "off", spellcheck: "false", class: "grow", placeholder: "https://…", "aria-label": "Adresse des Links",
+    onkeydown: (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); addTyped(); }
+      else if (ev.key === "Escape") { ev.preventDefault(); close(); button.focus(); }
+    } });
+  const entry = h("div", { class: "row", hidden: true }, input,
+    h("button", { class: "btn small", type: "button", onclick: () => addTyped() }, "Hinzufügen"),
+    h("button", { class: "btn ghost small", type: "button", onclick: () => { close(); button.focus(); } }, "Abbrechen"));
+  const button = h("button", { class: "btn ghost", type: "button", onclick: () => { entry.hidden = false; input.focus(); } }, "Link anfügen");
+  const box = h("div", { class: "link-picker" }, list, entry);
+  function close() { input.value = ""; entry.hidden = true; }
+  function draw() {
+    list.replaceChildren(...pending.map(url => h("span", {}, attachedLink(url),
+      h("button", { class: "x", type: "button", title: "Link entfernen", "aria-label": "Link entfernen", onclick: () => { pending = pending.filter(x => x !== url); draw(); } }, "×"))));
+  }
+  function addTyped() {
+    if (!input.value.trim()) { close(); return true; }
+    const url = linkFromInput(input.value);
+    if (!url) { status("Das sieht nicht nach einer Adresse aus. Beispiel: https://ski-tag.de", true); shownError = true; input.focus(); return false; }
+    if (shownError) { status(""); shownError = false; }
+    if (!pending.includes(url)) pending.push(url);
+    close(); draw(); return true;
+  }
+  draw();
+  return { box, button,
+    // Auch mitnehmen, was getippt, aber nicht mit „Hinzufügen“ bestätigt wurde. null = Eingabe ist keine gültige Adresse
+    take: () => addTyped() ? [...pending] : null,
+    clear() { pending = []; close(); draw(); },
   };
 }
 

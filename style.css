@@ -236,6 +236,13 @@ details.more > summary { cursor: pointer; color: var(--muted); font-size: 15px; 
 .chat-pending span { position: relative; display: block; }
 .chat-pending img { display: block; height: 72px; border-radius: 8px; }
 .chat-pending button { position: absolute; top: 2px; right: 2px; }
+.att-link { display: block; width: fit-content; max-width: 100%; font-weight: 600; overflow-wrap: anywhere; text-underline-offset: 2px; }
+.link-picker { display: grid; gap: 8px; }
+.link-pending { display: grid; gap: 6px; }
+.link-pending:empty { display: none; }
+.link-pending span { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--soft); border-radius: 8px; padding: 4px 4px 4px 10px; min-width: 0; }
+.link-pending .att-link { min-width: 0; }
+.link-pending .x { flex: 0 0 auto; }
 .chat-list { max-height: 60vh; overflow-y: auto; margin: 12px 0; }
 #links-box { margin-top: 8px; }
 #links-box #f-link { margin-top: 8px; }
