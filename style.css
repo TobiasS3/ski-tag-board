@@ -243,6 +243,8 @@ details.more > summary { cursor: pointer; color: var(--muted); font-size: 15px; 
 .link-pending span { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--soft); border-radius: 8px; padding: 4px 4px 4px 10px; min-width: 0; }
 .link-pending .att-link { min-width: 0; }
 .link-pending .x { flex: 0 0 auto; }
+.pdf-link { background: none; border: 0; padding: 0; margin-top: 6px; color: var(--accent); cursor: pointer; text-align: left; text-decoration: underline; text-underline-offset: 2px; }
+.chat-pending .pdf-pending { display: flex; align-items: center; min-height: 72px; max-width: 100%; padding: 8px 44px 8px 12px; background: var(--soft); border-radius: 8px; font-weight: 600; overflow-wrap: anywhere; }
 .chat-list { max-height: 60vh; overflow-y: auto; margin: 12px 0; }
 #links-box { margin-top: 8px; }
 #links-box #f-link { margin-top: 8px; }

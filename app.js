@@ -18,7 +18,7 @@ const CFG = {
 const AREAS = { hardware: "Hardware", netzwerk: "Netzwerk", wirtschaft: "Wirtschaft & Verkauf", app: "App", plan: "Plan" };
 const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen2"; // „2“: Stand einmal zurückgesetzt, damit die letzten 7 Tage als neu erscheinen
 const R = "/repos/" + CFG.owner + "/" + CFG.repo;
-const APP_VERSION = "1793623807"; // wird von bump.py gesetzt
+const APP_VERSION = "1793623970"; // wird von bump.py gesetzt
 const PUSH_KEY = "BDt9RkhaUrmGIJnyOg9suNNcrO5zHECtpFLbfVVyp8qQ6uzGEwVTHYhlB3SUzyqnHxOgY-tvPYC9PUWrwE3UEvQ", PUSH_DIR = "daten/push";
 
 // Läuft schon eine neuere Version online? Dann einmal frisch laden, damit nicht alte und neue Teile gemischt werden.
@@ -195,14 +195,21 @@ function parseLink(c) {
   const [title, url] = (c.body || "").split("\n");
   return { title: title || "", url: safeUrl((url || "").trim()) };
 }
-// Bilder im Chat stehen als eigene Zeile „![Bild](daten/chat-bilder/…)“ in der Nachricht
+// Anhänge stehen als eigene Zeile in der Nachricht: „![Bild](daten/chat-bilder/…)“ oder „[PDF: Name](daten/chat-bilder/….pdf)“.
+// In „images“ steht bei Bildern der Pfad, bei PDFs die ganze Zeile (so bleibt der Name beim Bearbeiten erhalten).
 const CHAT_IMG = /^!\[Bild\]\((daten\/chat-bilder\/[\w.-]+)\)$/;
+const CHAT_PDF = /^\[PDF: ([^\]]+)\]\((daten\/chat-bilder\/[\w.-]+\.pdf)\)$/;
 function splitChat(body) {
   const lines = (body || "").split("\n"), images = [];
-  const text = lines.filter(l => { const m = CHAT_IMG.exec(l.trim()); if (m) images.push(m[1]); return !m; }).join("\n").trim();
+  const text = lines.filter(l => {
+    const m = CHAT_IMG.exec(l.trim()), pdf = CHAT_PDF.exec(l.trim());
+    if (m) images.push(m[1]); else if (pdf) images.push(l.trim());
+    return !m && !pdf;
+  }).join("\n").trim();
   return { text, images };
 }
-const joinChat = (text, images) => [text, ...images.map(p => "![Bild](" + p + ")")].filter(Boolean).join("\n");
+const joinChat = (text, images) => [text, ...images.map(p => CHAT_PDF.test(p) ? p : "![Bild](" + p + ")")].filter(Boolean).join("\n");
+const attachmentLabel = (images) => { const pdf = images.map(p => CHAT_PDF.exec(p)).find(Boolean); return pdf ? "PDF: " + pdf[1] : "Bild"; };
 // Links bei Fragen und Antworten stehen als eigene Zeile „[Link](https://…)“ im Text
 const ATTACHED_LINK = /^\[Link\]\((https?:\/\/\S+)\)$/;
 function splitLinks(body) {
@@ -245,12 +252,12 @@ function newItems(base) {
     if (other(q.author, q.createdAt)) out.push({ id: "q" + q.id, at: q.createdAt, who: q.author, kind: to === me ? "Frage an dich" : "Neue Frage", text: cleanTitle(q.title), href: "fragen.html#q" + q.number });
     for (const c of q.comments.nodes) if (other(c.author, c.createdAt)) {
       const { text, links } = splitLinks(splitChat(c.body).text);
-      out.push({ id: "c" + c.id, at: c.createdAt, who: c.author, kind: "Antwort", text: text || (links[0] && linkLabel(links[0])) || "Bild", sub: "auf: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
+      out.push({ id: "c" + c.id, at: c.createdAt, who: c.author, kind: "Antwort", text: text || (links[0] && linkLabel(links[0])) || attachmentLabel(splitChat(c.body).images), sub: "auf: " + cleanTitle(q.title), href: "fragen.html#q" + q.number });
     }
     if (q.closed && other(q.author, q.closedAt)) out.push({ id: "s" + q.id + q.closedAt, at: q.closedAt, who: q.author, kind: "Frage geklärt", text: cleanTitle(q.title), sub: "steht jetzt unter „Geklärte Fragen“", href: "fragen.html#q" + q.number });
   }
   for (const c of SK.data.chat) if (other(c.user, c.created_at))
-    out.push({ id: "m" + c.id, at: c.created_at, who: c.user, kind: "Chat", text: splitChat(c.body).text || "Bild", href: "chat.html" });
+    out.push({ id: "m" + c.id, at: c.created_at, who: c.user, kind: "Chat", text: splitChat(c.body).text || attachmentLabel(splitChat(c.body).images), href: "chat.html" });
   for (const c of SK.data.links) if (other(c.user, c.created_at))
     out.push({ id: "l" + c.id, at: c.created_at, who: c.user, kind: "Neuer Link", text: parseLink(c).title, href: "chat.html" });
   // Aufgabe weggenommen: nur für den, der zuständig war, und nur solange er sie nicht wiederbekommen hat (z. B. nach „Rückgängig“)
@@ -471,14 +478,27 @@ function taskRow(i, onOpen) {
     taskActions(i));
 }
 
-// ---------- Bilder (Chat und Fragen) ----------
+// ---------- Bilder und PDFs (Chat und Fragen) ----------
 // Bilder liegen im privaten Repo, deshalb mit Token laden; einmal geladen bleiben sie im Speicher
 const imgCache = new Map();
+const rawFile = (path) => fetch("https://api.github.com" + R + "/contents/" + path, {
+  headers: { Authorization: "Bearer " + SK.token, Accept: "application/vnd.github.raw+json", "X-GitHub-Api-Version": "2022-11-28" },
+}).then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); });
+// PDF erst beim Klick laden und in einem neuen Tab öffnen; geht das nicht (z. B. in der Handy-App), wird es heruntergeladen
+function pdfLink(path, name) {
+  return h("button", { class: "att-link pdf-link", type: "button", title: name + " öffnen", onclick: async () => {
+    const tab = window.open("", "_blank");
+    try {
+      const url = URL.createObjectURL(new Blob([await rawFile(path)], { type: "application/pdf" }));
+      if (tab) tab.location = url; else h("a", { href: url, download: name }).click();
+    } catch { if (tab) tab.close(); status("Das PDF konnte nicht geladen werden.", true); }
+  } }, "PDF: " + name);
+}
 function chatImage(path, onLoad) {
+  const pdf = CHAT_PDF.exec(path);
+  if (pdf) return pdfLink(pdf[2], pdf[1]);
   const box = h("a", { class: "chat-img waiting", target: "_blank", rel: "noopener" });
-  if (!imgCache.has(path)) imgCache.set(path, fetch("https://api.github.com" + R + "/contents/" + path, {
-    headers: { Authorization: "Bearer " + SK.token, Accept: "application/vnd.github.raw+json", "X-GitHub-Api-Version": "2022-11-28" },
-  }).then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); }).then(b => URL.createObjectURL(b)));
+  if (!imgCache.has(path)) imgCache.set(path, rawFile(path).then(b => URL.createObjectURL(b)));
   imgCache.get(path).then(url => {
     const img = h("img", { src: url, alt: "Hochgeladenes Bild", onload: () => { if (onLoad) onLoad(img); } });
     box.href = url; box.classList.remove("waiting"); box.replaceChildren(img);
@@ -486,7 +506,7 @@ function chatImage(path, onLoad) {
   return box;
 }
 // Vor dem Hochladen verkleinern, damit Fotos vom Handy das Repo nicht aufblähen. GIFs bleiben, wie sie sind.
-const MAX_SIDE = 1600, MAX_GIF = 5 * 1024 * 1024;
+const MAX_SIDE = 1600, MAX_GIF = 5 * 1024 * 1024, MAX_PDF = 20 * 1024 * 1024;
 async function shrinkImage(file) {
   if (file.type === "image/gif") {
     if (file.size > MAX_GIF) throw new Error("Das GIF ist zu groß (höchstens 5 MB).");
@@ -503,27 +523,33 @@ const blobBase64 = (blob) => new Promise((ok, no) => {
 });
 async function uploadImage({ blob, ext }) {
   const path = "daten/chat-bilder/" + Date.now() + "-" + Math.random().toString(36).slice(2, 8) + "." + ext;
-  await api(R + "/contents/" + path, { method: "PUT", body: { message: "Bild von " + SK.me.login, content: await blobBase64(blob) } });
+  await api(R + "/contents/" + path, { method: "PUT", body: { message: (ext === "pdf" ? "PDF" : "Bild") + " von " + SK.me.login, content: await blobBase64(blob) } });
   return path;
 }
-// Bilder sammeln, die noch nicht gesendet sind: Knopf, Vorschau, Einfügen und Hineinziehen
+// Bilder und PDFs sammeln, die noch nicht gesendet sind: Knopf, Vorschau, Einfügen und Hineinziehen
 function imagePicker() {
   let pending = [];
   const box = h("div", { class: "chat-pending" });
-  const draw = () => box.replaceChildren(...pending.map(p => h("span", {}, h("img", { src: p.url, alt: "Bild zum Senden" }),
-    h("button", { class: "x", type: "button", title: "Bild entfernen", "aria-label": "Bild entfernen", onclick: () => {
-      URL.revokeObjectURL(p.url); pending = pending.filter(x => x !== p); draw();
+  const draw = () => box.replaceChildren(...pending.map(p => h("span", p.name ? { class: "pdf-pending" } : {}, p.name ? "PDF: " + p.name : h("img", { src: p.url, alt: "Bild zum Senden" }),
+    h("button", { class: "x", type: "button", title: "Anhang entfernen", "aria-label": "Anhang entfernen", onclick: () => {
+      if (p.url) URL.revokeObjectURL(p.url); pending = pending.filter(x => x !== p); draw();
     } }, "×"))));
   async function add(files) {
     for (const f of files) {
-      if (!f.type.startsWith("image/")) continue;
+      if (f.type === "application/pdf" || /\.pdf$/i.test(f.name)) {
+        if (f.size > MAX_PDF) { status("„" + f.name + "“ ist zu groß (höchstens 20 MB).", true); continue; }
+        // Klammern und Zeilenumbrüche würden die Anhang-Zeile zerstören
+        pending.push({ blob: f, ext: "pdf", name: f.name.replace(/[\[\]()\r\n]+/g, " ").trim() || "Dokument.pdf" });
+        continue;
+      }
+      if (!f.type.startsWith("image/")) { status("„" + f.name + "“ geht nicht: Anhängen kannst du nur Bilder und PDFs.", true); continue; }
       try { const s = await shrinkImage(f); pending.push({ ...s, url: URL.createObjectURL(s.blob) }); }
       catch (e) { status(e.message.includes("GIF") ? e.message : "Dieses Bild kann ich nicht lesen.", true); }
     }
     draw();
   }
-  const file = h("input", { type: "file", accept: "image/*", multiple: true, hidden: true, onchange: (ev) => { add([...ev.target.files]); ev.target.value = ""; } });
-  const button = h("button", { class: "btn ghost", type: "button", onclick: () => file.click() }, "Bild anhängen");
+  const file = h("input", { type: "file", accept: "image/*,application/pdf,.pdf", multiple: true, hidden: true, onchange: (ev) => { add([...ev.target.files]); ev.target.value = ""; } });
+  const button = h("button", { class: "btn ghost", type: "button", onclick: () => file.click() }, "Bild oder PDF anhängen");
   return { box, button, file,
     has: () => pending.length > 0,
     watch(form) {
@@ -532,8 +558,8 @@ function imagePicker() {
       form.addEventListener("drop", (ev) => { if (ev.dataTransfer.files.length) { ev.preventDefault(); add([...ev.dataTransfer.files]); } });
     },
     // schon hochgeladene merken: Scheitert das Senden danach, kommt ein Bild beim nächsten Versuch nicht doppelt ins Repo
-    async upload() { const out = []; for (const p of pending) out.push(p.path = p.path || await uploadImage(p)); return out; },
-    clear() { pending.forEach(p => URL.revokeObjectURL(p.url)); pending = []; draw(); },
+    async upload() { const out = []; for (const p of pending) { p.path = p.path || await uploadImage(p); out.push(p.name ? "[PDF: " + p.name + "](" + p.path + ")" : p.path); } return out; },
+    clear() { pending.forEach(p => p.url && URL.revokeObjectURL(p.url)); pending = []; draw(); },
   };
 }
 
