@@ -15,10 +15,28 @@ const CFG = {
   // falls jemand bei GitHub keinen Namen eingetragen hat
   names: { "Ma-xi": "Maximilian Joszt", Lukcoderc: "Lukas Eder", TobiasS3: "Tobias Strobl" },
 };
+// Startwerte der Kostentabelle, solange noch nichts gespeichert ist
+const DEFAULT_COSTS = {
+  kosten: [
+    { name: "Chip-Hardware (pro Stück)", art: "einmalig", betrag: null },
+    { name: "Chip-Prototypen für den Test", art: "einmalig", betrag: null },
+    { name: "LoRa-Empfänger an den Stationen", art: "einmalig + Montage", betrag: null },
+    { name: "Server / Hosting", art: "laufend", betrag: null },
+    { name: "Automat bzw. Ausgabe an der Kassa", art: "einmalig", betrag: null },
+    { name: "Zulassung (CE, Funk)", art: "einmalig", betrag: null },
+    { name: "Versicherung / Haftung (SOS)", art: "laufend", betrag: null },
+    { name: "Apple-Entwicklerkonto (iOS)", art: "jährlich", betrag: null },
+  ],
+  einnahmen: [
+    { name: "Chip-Miete", art: "pro Tag", betrag: null },
+    { name: "Skischul-Abo", art: "pro Saison", betrag: null },
+    { name: "Bergbahn (Lizenz oder Beteiligung)", art: "offen", betrag: null },
+  ],
+};
 const AREAS = { hardware: "Hardware", netzwerk: "Netzwerk", wirtschaft: "Wirtschaft & Verkauf", app: "App", plan: "Plan" };
 const TOKEN_KEY = "skitag-token", SEEN_KEY = "skitag-seen2"; // „2“: Stand einmal zurückgesetzt, damit die letzten 7 Tage als neu erscheinen
 const R = "/repos/" + CFG.owner + "/" + CFG.repo;
-const APP_VERSION = "1793623970"; // wird von bump.py gesetzt
+const APP_VERSION = "1793743872"; // wird von bump.py gesetzt
 const PUSH_KEY = "BDt9RkhaUrmGIJnyOg9suNNcrO5zHECtpFLbfVVyp8qQ6uzGEwVTHYhlB3SUzyqnHxOgY-tvPYC9PUWrwE3UEvQ", PUSH_DIR = "daten/push";
 
 // Läuft schon eine neuere Version online? Dann einmal frisch laden, damit nicht alte und neue Teile gemischt werden.
@@ -33,7 +51,7 @@ async function checkVersion() {
 
 const SK = {
   token: null, me: null,
-  data: { people: [], names: {}, milestones: [], issues: [], closers: {}, events: [], diary: [], chat: [], links: [], questions: [], qa: null, repoId: null },
+  data: { people: [], names: {}, milestones: [], issues: [], closers: {}, events: [], diary: [], chat: [], links: [], questions: [], qa: null, repoId: null, biz: [] },
   prevSeen: 0,
 };
 
@@ -154,6 +172,8 @@ async function loadTasks() {
   const real = issues.filter(i => !i.pull_request && ![CFG.diary, CFG.chat, CFG.links].includes(i.number));
   d.issues = real.filter(i => i.state_reason !== "not_planned");
   d.deleted = real.filter(i => i.state_reason === "not_planned");
+  // wieder geöffnete Aufgaben: alten „erledigt von“ vergessen, sonst stimmt er beim nächsten Abhaken nicht
+  for (const i of d.issues) if (i.state === "open") delete d.closers[i.number];
   await Promise.all(d.issues.filter(i => i.state === "closed" && !d.closers[i.number]).map(async i => {
     try { d.closers[i.number] = (await api(R + "/issues/" + i.number)).closed_by; } catch {}
   }));
@@ -178,6 +198,54 @@ async function loadQuestions() {
   d.repoId = repo.id;
   d.qa = repo.discussionCategories.nodes.find(c => c.slug === "q-a") || null;
   d.questions = repo.discussions.nodes.filter(x => x.category && x.category.slug === "q-a");
+}
+// Änderungen am Businessplan (Kostentabelle und Plan-Datei) von den anderen, letzte 30 Tage.
+// Jede Änderung wird nur einmal ausgewertet; ein Commit ändert sich nie mehr.
+const bizCache = new Map();
+const money = (v) => v == null ? "offen" : Number(v).toLocaleString("de-AT", { style: "currency", currency: "EUR", maximumFractionDigits: 2 });
+async function costsAt(sha) {
+  try { return JSON.parse(b64dec((await api(R + "/contents/" + CFG.costFile + "?ref=" + sha, { allow404: true })).content)); }
+  catch (e) { if (e.status === 404) return DEFAULT_COSTS; throw e; }
+}
+function costDiff(a, b) {
+  const out = [];
+  for (const [key, label, word] of [["kosten", "Kostenposten", "Betrag"], ["einnahmen", "Einnahme", "Preis"]]) {
+    const old = new Map((a[key] || []).map(x => [x.name, x])), now = new Map((b[key] || []).map(x => [x.name, x]));
+    for (const [name, x] of now) {
+      const o = old.get(name);
+      if (!o) { out.push((key === "kosten" ? "Neuer Kostenposten" : "Neue Einnahme") + " „" + name + "“" + (x.art ? " (" + x.art + ")" : "") + ": " + money(x.betrag)); continue; }
+      if (o.betrag !== x.betrag) out.push(label + " „" + name + "“: " + word + " " + money(x.betrag) + " (vorher " + money(o.betrag) + ")");
+      if ((o.art || "") !== (x.art || "")) out.push(label + " „" + name + "“: " + (key === "kosten" ? "Art" : "Einheit") + " jetzt „" + (x.art || "–") + "“ (vorher „" + (o.art || "–") + "“)");
+    }
+    for (const name of old.keys()) if (!now.has(name)) out.push(label + " „" + name + "“ gelöscht");
+  }
+  return out;
+}
+async function costChange(c) {
+  const [before, after] = await Promise.all([c.parents[0] ? costsAt(c.parents[0].sha) : DEFAULT_COSTS, costsAt(c.sha)]);
+  const lines = costDiff(before, after);
+  return lines.length ? { kind: "Businessplan: Kosten & Einnahmen", text: lines.join("\n"), href: "plan.html#kosten" } : null;
+}
+// Plan-Datei: geänderte Textzeilen aus dem Unterschied, ohne HTML
+async function planChange(c) {
+  const full = await api(R + "/commits/" + c.sha);
+  const f = (full.files || []).find(x => x.filename === CFG.planFile);
+  const plain = (s) => (new DOMParser().parseFromString(s, "text/html").body.textContent || "").replace(/\s+/g, " ").trim();
+  const pick = (sign) => (f && f.patch || "").split("\n").filter(l => l[0] === sign && !l.startsWith(sign.repeat(3))).map(l => plain(l.slice(1))).filter(Boolean);
+  const added = pick("+"), removed = pick("-").filter(x => !added.includes(x));
+  const text = added.length ? added.map(x => "+ " + x).join("\n") : removed.length ? removed.map(x => "− " + x).join("\n") : "Aufbau oder Aussehen geändert";
+  return { kind: "Businessplan geändert", text, sub: added.length && removed.length ? removed.length + " Stelle(n) ersetzt oder entfernt" : null, href: "plan.html#plan" };
+}
+async function loadBiz() {
+  const since = ymd(new Date(Date.now() - 30 * 86400000)) + "T00:00:00Z"; // ganzer Tag, damit die Adresse gleich bleibt und der ETag greift
+  const commits = (path) => api(R + "/commits?path=" + encodeURIComponent(path) + "&since=" + since + "&per_page=30");
+  const [kc, pc] = await Promise.all([commits(CFG.costFile), commits(CFG.planFile)]);
+  const read = (c, fn) => {
+    if (!c.author || c.author.login === SK.me.login) return null;
+    if (!bizCache.has(c.sha)) bizCache.set(c.sha, fn(c).then(x => x && { ...x, id: "b" + c.sha, at: c.commit.committer.date, who: c.author }).catch(() => { bizCache.delete(c.sha); return null; }));
+    return bizCache.get(c.sha);
+  };
+  SK.data.biz = (await Promise.all([...kc.map(c => read(c, costChange)), ...pc.map(c => read(c, planChange))])).filter(Boolean);
 }
 // ---------- Inhalte deuten ----------
 function areaOfIssue(i) { return (i.labels || []).map(x => x.name).find(n => AREAS[n]) || "plan"; }
@@ -269,6 +337,15 @@ function newItems(base) {
     const kind = isMine(i) ? "Neue Aufgabe für dich" : isFree(i) ? "Neue Aufgabe, noch niemand zuständig" : "Neue Aufgabe für " + ownerName(i);
     out.push({ id: "i" + i.number, at: i.created_at, who: i.user, kind, text: i.title, href: isMine(i) ? "./" : "zeitplan.html" });
   }
+  // abgehakte Aufgaben der anderen
+  for (const i of SK.data.issues) {
+    const by = SK.data.closers[i.number];
+    if (i.state === "closed" && other(by, i.closed_at))
+      out.push({ id: "x" + i.number + i.closed_at, at: i.closed_at, who: by, kind: isMine(i) ? "Deine Aufgabe erledigt" : "Aufgabe erledigt", text: i.title,
+        sub: firstName(by.login) + " hat sie abgehakt" + (isMine(i) || isFree(i) ? "." : " (zuständig: " + ownerName(i) + ")."), href: isMine(i) ? "./" : "zeitplan.html" });
+  }
+  // Businessplan: Preise, Kosten und Text
+  for (const b of SK.data.biz) if (other(b.who, b.at)) out.push(b);
   const read = readIds();
   return out.filter(x => !read.has(x.id)).sort((a, b) => b.at.localeCompare(a.at));
 }
@@ -770,7 +847,7 @@ let pageRender = null, pageNeeds = [], drawnData = null;
 // quiet: nur neu zeichnen, wenn sich etwas geändert hat (sonst gehen z. B. offene Rückfragen verloren).
 // lightsOnly: während jemand tippt, nur die Lichter im Menü aktualisieren.
 async function refresh({ quiet, lightsOnly } = {}) {
-  const jobs = { people: loadPeople, tasks: loadTasks, diary: loadDiary, chat: loadChat, questions: loadQuestions };
+  const jobs = { people: loadPeople, tasks: loadTasks, diary: loadDiary, chat: loadChat, questions: loadQuestions, biz: loadBiz };
   await Promise.all(pageNeeds.filter(k => jobs[k]).map(k => jobs[k]()));
   renderUserbox();
   if (lightsOnly) return;
@@ -804,7 +881,7 @@ async function boot() {
 function startPage(page, needs, render) {
   checkVersion();
   SK.page = page;
-  pageNeeds = ["people", "questions", "diary", "chat", "tasks", ...needs];
+  pageNeeds = ["people", "questions", "diary", "chat", "tasks", "biz", ...needs];
   pageRender = render;
   shell(page);
   SK.token = load(TOKEN_KEY);

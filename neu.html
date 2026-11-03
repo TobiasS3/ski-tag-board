@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=1793623970">
+<link rel="stylesheet" href="style.css?v=1793743872">
 </head>
 <body>
 <div class="wrap" id="wrap">
@@ -26,7 +26,7 @@
     </section>
   </main>
 </div>
-<script src="app.js?v=1793623970"></script>
+<script src="app.js?v=1793743872"></script>
 <script>
 function render() {
   const items = newItems(SK.prevSeen);
@@ -41,7 +41,7 @@ function render() {
     h("a", { class: "new-link", href: it.href, onclick: () => setRead(it.id, true) },
       h("div", { class: "kind" }, it.kind),
       h("div", { class: "small muted" }, h("b", { style: "color:var(--ink)" }, firstName(it.who && it.who.login)), " · " + ago(it.at), it.area ? " · " : "", it.area ? chip(it.area) : null),
-      h("p", {}, it.text.length > 220 ? it.text.slice(0, 220) + " …" : it.text),
+      h("p", {}, it.text.length > 600 ? it.text.slice(0, 600) + " …" : it.text),
       it.sub ? h("div", { class: "small muted" }, it.sub) : null),
     h("button", { class: "btn ghost small", type: "button", onclick: () => markRead(it) }, "✓ Gelesen"))));
 }

@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=1793623970">
+<link rel="stylesheet" href="style.css?v=1793743872">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
@@ -29,7 +29,7 @@
       </section>
     </div>
 
-    <section class="panel">
+    <section class="panel" id="kosten">
       <div class="panel-head"><h2>Kosten &amp; Einnahmen</h2><span class="muted small" id="cost-info"></span></div>
       <p class="muted small" style="margin:0">Beträge in Euro eintragen, leer lassen, wenn noch offen. Gespeichert wird in <code>daten/kosten.json</code> im Repo.</p>
       <div class="table-scroll">
@@ -52,31 +52,14 @@
       <div class="row"><button class="btn" type="button" id="save-costs">Kosten speichern</button><span class="muted small" id="cost-dirty"></span></div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="plan">
       <div class="panel-head"><h2>Businessplan</h2><a class="small" id="plan-edit" target="_blank" rel="noopener">Auf GitHub bearbeiten</a></div>
       <div id="plan-host"></div>
     </section>
   </main>
 </div>
-<script src="app.js?v=1793623970"></script>
+<script src="app.js?v=1793743872"></script>
 <script>
-const DEFAULT_COSTS = {
-  kosten: [
-    { name: "Chip-Hardware (pro Stück)", art: "einmalig", betrag: null },
-    { name: "Chip-Prototypen für den Test", art: "einmalig", betrag: null },
-    { name: "LoRa-Empfänger an den Stationen", art: "einmalig + Montage", betrag: null },
-    { name: "Server / Hosting", art: "laufend", betrag: null },
-    { name: "Automat bzw. Ausgabe an der Kassa", art: "einmalig", betrag: null },
-    { name: "Zulassung (CE, Funk)", art: "einmalig", betrag: null },
-    { name: "Versicherung / Haftung (SOS)", art: "laufend", betrag: null },
-    { name: "Apple-Entwicklerkonto (iOS)", art: "jährlich", betrag: null },
-  ],
-  einnahmen: [
-    { name: "Chip-Miete", art: "pro Tag", betrag: null },
-    { name: "Skischul-Abo", art: "pro Saison", betrag: null },
-    { name: "Bergbahn (Lizenz oder Beteiligung)", art: "offen", betrag: null },
-  ],
-};
 let costs = null, costSha = null, dirty = false, charts = {};
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const euro = (n) => n.toLocaleString("de-AT", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
@@ -168,11 +151,12 @@ $("save-costs").addEventListener("click", () => act(async () => {
 window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
 
 // ---------- Plan ----------
-let planLoaded = false;
+// Wird bei jedem Aktualisieren geprüft; neu eingebaut nur, wenn jemand den Plan geändert hat
+let planHtml = null;
 async function loadPlan() {
-  if (planLoaded) return;
   $("plan-edit").href = `https://github.com/${CFG.owner}/${CFG.repo}/edit/main/${encodeURIComponent(CFG.planFile)}`;
   const html = await api(R + "/contents/" + encodeURIComponent(CFG.planFile), { accept: "application/vnd.github.raw+json" });
+  if (html === planHtml) return;
   // Plan direkt in die Seite einbauen (eigener Bereich, damit sich die Styles nicht mischen).
   // So funktionieren die Sprung-Links oben im Plan.
   const doc = new DOMParser().parseFromString(html, "text/html");
@@ -180,13 +164,13 @@ async function loadPlan() {
   doc.querySelectorAll("*").forEach(el => [...el.attributes].forEach(a => { if (/^on/i.test(a.name)) el.removeAttribute(a.name); }));
   const css = [...doc.querySelectorAll("style")].map(st => st.textContent).join("\n")
     .replace(/:root/g, ":host").replace(/(^|[\s,{}])body(?=[\s,{])/g, "$1.plan-body");
-  const host = $("plan-host"), root = host.shadowRoot || host.attachShadow({ mode: "open" });
+  const host = $("plan-host"), fresh = !host.shadowRoot, root = host.shadowRoot || host.attachShadow({ mode: "open" });
   const style = document.createElement("style"); style.textContent = css;
   const body = document.createElement("div"); body.className = "plan-body";
   doc.querySelectorAll("style").forEach(st => st.remove());
   body.append(...doc.body.childNodes);
   root.replaceChildren(style, body);
-  root.addEventListener("click", (e) => {
+  if (fresh) root.addEventListener("click", (e) => {
     const a = e.composedPath().find(n => n.tagName === "A");
     const href = a && a.getAttribute("href");
     if (!href || !href.startsWith("#")) return;
@@ -194,13 +178,21 @@ async function loadPlan() {
     const target = root.getElementById(decodeURIComponent(href.slice(1)));
     if (target) target.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
   });
-  planLoaded = true;
+  planHtml = html;
+}
+// Sprung von „Neu“ (plan.html#kosten): erst nach dem Laden möglich, weil die Seite bis dahin versteckt ist
+let jumped = false;
+function jumpToHash() {
+  if (jumped) return; jumped = true;
+  const el = location.hash && document.getElementById(location.hash.slice(1));
+  if (el) el.scrollIntoView({ block: "start" });
 }
 
 startPage("plan", ["tasks", "diary"], async () => {
   renderAreaChart(); renderPeopleChart();
   if (!costs || !dirty) { await loadCosts(); renderCostTables(); }
   await loadPlan();
+  jumpToHash();
 });
 </script>
 </body>
